@@ -14,6 +14,7 @@ import { Director, Situation } from './ai/director';
 import { Fx } from './fx';
 import { Hud } from './hud';
 import { audio } from './audio';
+import { Mortar, FireMission } from './mortar';
 
 type ImpactKind = 'erde' | 'stein' | 'holz' | 'metall' | 'blaetter' | 'koerper';
 
@@ -34,6 +35,12 @@ interface HitData {
 interface Pending {
   t: number;
   fn: () => void;
+}
+
+/** Eine Deckung auf dem Grat; zwischen ihnen wechselt der Spieler mit A/D. */
+interface Position {
+  cover: CoverDef;
+  aimEye: THREE.Vector3;
 }
 
 interface Flag {
@@ -70,6 +77,11 @@ export class Game {
   private sky!: SkySystem;
   player!: Player;
   private cover!: CoverDef;
+  private positions: Position[] = [];
+  private posIdx = 0;
+  private mortar!: Mortar;
+  private enemyCenter = new THREE.Vector3();
+  private wasMoving = false;
   enemies: Enemy[] = [];
   private director!: Director;
   private diff: Difficulty = DIFFICULTIES.normal;
@@ -256,31 +268,43 @@ export class Game {
 
     const center = this.enemies.reduce((a, e) => a.add(e.pos), new THREE.Vector3()).multiplyScalar(1 / Math.max(1, this.enemies.length));
     center.y += 1;
+    this.enemyCenter.copy(center);
+
+    // Ausweichstellungen links und rechts auf dem Grat
+    this.positions = [{ cover: this.cover, aimEye }];
+    const usedKinds: CoverKind[] = [kind];
+    for (const side of [-1, 1]) {
+      const alt = this.placeAltPosition(px, side, usedKinds, rng);
+      if (alt) {
+        this.positions.push(alt);
+        usedKinds.push(alt.cover.kind);
+      }
+    }
+    this.positions.sort((a, b) => a.cover.group.position.x - b.cover.group.position.x);
+    this.posIdx = this.positions.findIndex((p) => p.cover === this.cover);
+    this.mortar = new Mortar(this.diff.mortarPerShot, this.diff.mortarCountdown, rng);
+    this.wasMoving = false;
 
     // Windfahnen: eine am Gegnerhang, eine im Tal
     this.addFlag(center.clone().add(new THREE.Vector3(rng.range(-30, 30), 0, rng.range(-15, 15))));
     const mid = aimEye.clone().lerp(center, 0.45).add(new THREE.Vector3(rng.range(-40, 40), 0, 0));
     this.addFlag(mid);
 
-    // Vegetation mit freien Sichtschneisen
-    const lanes = this.enemies.map((e) => [aimEye.clone(), e.pos.clone()] as const);
-    const distToLane = (x: number, z: number) => {
-      let best = Infinity;
-      for (const [a, b] of lanes) {
-        const abx = b.x - a.x, abz = b.z - a.z;
-        const t = clamp(((x - a.x) * abx + (z - a.z) * abz) / (abx * abx + abz * abz), 0, 1);
-        best = Math.min(best, Math.hypot(a.x + abx * t - x, a.z + abz * t - z));
-      }
-      return best;
-    };
+    // Vegetation mit freien Sichtschneisen (von der Hauptstellung breiter als von den Ausweichstellungen)
+    const lanes = this.positions.flatMap((pos) => this.enemies.map((e) => ({ a: pos.aimEye.clone(), b: e.pos.clone(), w: pos.cover === this.cover ? 8 : 5 })));
+    const inLane = (x: number, z: number) => lanes.some(({ a, b, w }) => {
+      const abx = b.x - a.x, abz = b.z - a.z;
+      const t = clamp(((x - a.x) * abx + (z - a.z) * abz) / (abx * abx + abz * abz), 0, 1);
+      return Math.hypot(a.x + abx * t - x, a.z + abz * t - z) < w;
+    });
+    const coverPts = this.positions.map((pos) => ({ x: pos.cover.group.position.x, z: pos.cover.group.position.z, hut: pos.cover.kind === 'huette' }));
     const exclude = (x: number, z: number) => {
-      if (Math.hypot(x - px, z - pz) < 7) return true;
+      if (coverPts.some((c) => Math.hypot(x - c.x, z - c.z) < 7)) return true;
       if (this.enemies.some((e) => Math.hypot(e.pos.x - x, e.pos.z - z) < 5)) return true;
-      if (this.props.some(() => false)) return true;
-      return distToLane(x, z) < 8;
+      return inLane(x, z);
     };
     const grassExclude = (x: number, z: number) => {
-      if (Math.hypot(x - px, z - pz) < (kind === 'huette' ? 2.6 : 2)) return true;
+      if (coverPts.some((c) => Math.hypot(x - c.x, z - c.z) < (c.hut ? 2.6 : 2))) return true;
       return this.enemies.some((e) => Math.hypot(e.pos.x - x, e.pos.z - z) < 3.2);
     };
     const veg = new Vegetation(this.terrain, rng, exclude, grassExclude, this.enemies.map((e) => e.pos), aimEye);
@@ -293,7 +317,7 @@ export class Game {
     this.paused = false;
     this.hud.toast(`${this.cover.label}: ${this.cover.hint}`, 5);
     if (this.diff.tagging === 'auto') this.enemies.forEach((e) => (e.tagged = true));
-    this.hud.brief(this.briefing(aimEye));
+    this.hud.brief(this.briefing(aimEye), 14);
     audio.ambience(this.sky.atmo.weather);
     this.updateWind(0);
   }
@@ -311,7 +335,50 @@ export class Game {
       const note = { wache: 'am Lagerfeuer hinter Sandsaecken', patrouille: 'laeuft am Hang hin und her', scharfschuetze: 'liegt im Gras, sehr schwer zu sehen', spotter: 'mit Fernglas, stehend' }[e.type];
       return `<b>${e.info.label}</b> · ${side} · ca. ${dist} m · ${note}`;
     });
-    return `Funk: ${this.enemies.length} Ziele am Gegenhang. Rote Fahnen markieren die Stellung. Richtung ab Rundenstart-Blick.<br>${lines.join('<br>')}`;
+    const alts = [this.positions[this.posIdx - 1], this.positions[this.posIdx + 1]]
+      .map((p, i) => (p ? `${i === 0 ? '<b>A</b> links' : '<b>D</b> rechts'}: ${p.cover.label}, ${Math.round(p.aimEye.distanceTo(eye))} m` : ''))
+      .filter(Boolean);
+    const mortarLine = alts.length
+      ? `<br>Achtung, Moerser: Wer zu oft aus derselben Stellung schiesst, wird eingemessen. Ausweichstellungen ${alts.join(' · ')}.`
+      : '';
+    return `Funk: ${this.enemies.length} Ziele am Gegenhang. Rote Fahnen markieren die Stellung. Richtung ab Rundenstart-Blick.<br>${lines.join('<br>')}${mortarLine}`;
+  }
+
+  /** Zweite Deckung 25–60 m seitlich auf dem Grat, mit moeglichst viel Sicht auf die Gegner. */
+  private placeAltPosition(px: number, side: number, usedKinds: CoverKind[], rng: Rng): Position | null {
+    let best: { x: number; z: number; score: number } | null = null;
+    for (let i = 0; i < 60; i++) {
+      const x = px + side * rng.range(25, 60), z = rng.range(-25, 8);
+      const slope = this.terrain.slopeAt(x, z);
+      if (slope > 0.22) continue;
+      const eye = new THREE.Vector3(x, this.terrain.heightAt(x, z) + 1.4, z);
+      let score = -slope * 5;
+      for (const e of this.enemies) {
+        const chest = e.pos.clone().setY(e.pos.y + (e.type === 'scharfschuetze' ? 0.35 : 1.3));
+        if (this.terrain.lineOfSight(eye, chest, 0.3)) score += 2;
+      }
+      if (!best || score > best.score) best = { x, z, score };
+    }
+    if (!best || best.score < 1) return null;
+    const kinds = (['busch', 'fels', 'huette', 'holzstapel', 'autowrack'] as CoverKind[]).filter((k) => !usedKinds.includes(k));
+    const cover = buildCover(rng.pick(kinds), rng);
+    let groundY = this.terrain.heightAt(best.x, best.z);
+    if (cover.kind === 'huette') {
+      for (const [dx, dz] of [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]]) groundY = Math.max(groundY, this.terrain.heightAt(best.x + dx, best.z + dz));
+    }
+    cover.group.position.set(best.x, groundY, best.z);
+    cover.group.rotation.y = rng.range(-0.2, 0.2);
+    this.scene.add(cover.group);
+    cover.group.updateMatrixWorld(true);
+    return { cover, aimEye: cover.aimEye.clone().applyMatrix4(cover.group.matrixWorld) };
+  }
+
+  private aliveCenter(): THREE.Vector3 {
+    const alive = this.enemies.filter((e) => !e.dead);
+    if (!alive.length) return this.enemyCenter.clone();
+    const c = alive.reduce((a, e) => a.add(e.pos), new THREE.Vector3()).multiplyScalar(1 / alive.length);
+    c.y += 1;
+    return c;
   }
 
   private addGuardPost(e: Enemy, playerEye: THREE.Vector3) {
@@ -383,6 +450,7 @@ export class Game {
     this.fx.muzzleFlash(origin, dir, 0.6);
     p.onFired();
     this.lastShotTime = this.time;
+    this.mortar.onPlayerShot(this.enemies.filter((e) => !e.dead && e.knowsPlayer).length);
     const b = new Bullet<HitData>(origin, dir);
     // Alle hoeren den Schuss (Schall braucht Zeit)
     for (const e of this.enemies) {
@@ -441,6 +509,34 @@ export class Game {
       const d = Math.round(best.pos.distanceTo(p.aimEye));
       this.hud.toast(this.diff.tagDistance ? `${best.info.label} markiert · ${d} m` : `${best.info.label} markiert`);
     }
+  }
+
+  /** Geduckter Sprint zur naechsten Deckung links (-1) oder rechts (+1). */
+  relocate(dir: -1 | 1) {
+    const p = this.player;
+    if (!this.running || this.paused || this.bulletCam || !p) return;
+    if (!['ducked', 'up', 'rising', 'lowering'].includes(p.state)) return;
+    const next = this.positions[this.posIdx + dir];
+    if (!next) {
+      this.hud.toast(`Keine Ausweichstellung weiter ${dir < 0 ? 'links' : 'rechts'}`);
+      return;
+    }
+    this.posIdx += dir;
+    this.cover = next.cover;
+    p.relocate(next.cover, this.aliveCenter());
+    this.mortar.onRelocated();
+    // Wer dich nicht laufen sieht, verliert deine Spur
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      e.knowsPlayer = false;
+      e.awareness = Math.min(e.awareness, e.canSeePlayer ? 0.8 : 0.45);
+      if (e.phase !== 'bolt' && e.phase !== 'none') {
+        e.phase = 'none';
+        e.glint = 0;
+      }
+      if (e.intent === 'zielen') e.intent = 'beobachten';
+    }
+    this.hud.toast(`Stellungswechsel: ${next.cover.label} ${dir < 0 ? 'links' : 'rechts'} — lauf!`);
   }
 
   skipCinematic() {
@@ -519,6 +615,10 @@ export class Game {
         const dist = Math.round(bullet.origin.distanceTo(hit.point));
         this.longest = Math.max(this.longest, dist);
         this.hud.toast(`${d.enemy.info.label} ausgeschaltet · ${d.zone === 'kopf' ? 'Kopftreffer' : 'Treffer'} · ${dist} m`);
+        if (d.enemy.type === 'spotter' && this.mortar.cancel(this.time)) {
+          audio.radio();
+          this.hud.toast(`Spotter ausgeschaltet · ${dist} m — Feuerauftrag abgebrochen!`, 4);
+        }
         for (const o of this.enemies) if (!o.dead) o.comradeDown(this.time);
         this.director.update(0, this.enemies, this.situation(), true);
         if (this.enemies.every((e) => e.dead)) this.finish(true, 'Alle Gegner ausgeschaltet');
@@ -532,9 +632,10 @@ export class Game {
     const p = this.player;
     const muzzle = new THREE.Vector3();
     e.human.scopeFront.getWorldPosition(muzzle);
-    const dirToPlayer = p.aimEye.clone().sub(muzzle).normalize();
+    const aim = (p.moving ? p.eye : p.aimEye).clone();
+    const dirToPlayer = aim.clone().sub(muzzle).normalize();
     this.fx.muzzleFlash(muzzle, dirToPlayer, 1);
-    const dist = muzzle.distanceTo(p.aimEye);
+    const dist = muzzle.distanceTo(aim);
     audio.distantShot(dist, true, muzzle);
     const travel = dist / 720;
     const exposed = p.exposed;
@@ -544,7 +645,8 @@ export class Game {
     this.later(travel, () => {
       if (!this.running || p.state === 'dead' || p.state === 'won') return;
       const nowExposed = p.exposed;
-      if (exposed && nowExposed && this.rng.next() < hitP) {
+      // Laufendes Ziel ist schwer zu treffen
+      if (exposed && nowExposed && this.rng.next() < hitP * (p.moving ? 0.35 : 1)) {
         if (this.hp > 1) this.playerWounded(e, dist, muzzle);
         else this.playerKilled(e, dist, false);
         return;
@@ -555,7 +657,7 @@ export class Game {
         return;
       }
       // Daneben bzw. in die Deckung
-      const toEnemy = muzzle.clone().sub(p.aimEye).normalize();
+      const toEnemy = muzzle.clone().sub(aim).normalize();
       if (!nowExposed) {
         const pt = p.aimEye.clone().addScaledVector(toEnemy, this.cover.kind === 'huette' ? 0.75 : 1.0);
         pt.y -= 0.35;
@@ -563,11 +665,11 @@ export class Game {
         audio.impact(this.cover.impact === 'blaetter' ? 'blaetter' : this.cover.impact, 1.2);
       } else {
         const side = new THREE.Vector3().crossVectors(toEnemy, UP).normalize();
-        const pt = p.aimEye.clone().addScaledVector(side, (this.rng.next() - 0.5) * 3).addScaledVector(toEnemy, -2 - this.rng.next() * 6);
+        const pt = aim.clone().addScaledVector(side, (this.rng.next() - 0.5) * 3).addScaledVector(toEnemy, -2 - this.rng.next() * 6);
         pt.y = this.terrain.heightAt(pt.x, pt.z);
         this.fx.impact(pt, UP, 'erde', this.wind);
         audio.whiz();
-        audio.impact('erde', pt.distanceTo(p.aimEye), pt);
+        audio.impact('erde', pt.distanceTo(aim), pt);
       }
       p.nearMiss();
     });
@@ -611,6 +713,64 @@ export class Game {
       ? `Durch die Deckung getroffen (${this.cover.label}) · ${e.info.label}, ${Math.round(dist)} m`
       : `Getroffen von ${e.info.label} aus ${Math.round(dist)} m`;
     this.finish(false, reason);
+  }
+
+  // ---------------------------------------------------------------- Moerser
+
+  private callMortar(bySpotter: boolean) {
+    const p = this.player;
+    const target = p.duckEye.clone();
+    target.y = this.terrain.heightAt(target.x, target.z);
+    const center = this.aliveCenter();
+    const m = this.mortar.call(target, center.clone().sub(target), this.time, bySpotter);
+    // Moerserstellung weit hinter dem Gegenhang
+    const battery = center.clone().add(center.clone().sub(target).setY(0).normalize().multiplyScalar(450));
+    audio.radio();
+    this.hud.toast(bySpotter ? 'Funk abgefangen: Der Spotter fordert Moerserfeuer auf deine Stellung an!' : 'Funk abgefangen: Moerserfeuer auf deine Stellung angefordert!', 4.5);
+    for (const imp of m.impacts) {
+      const launch = imp.t - 6.5 - this.time;
+      if (launch > 0) this.later(launch, () => !m.cancelled && audio.mortarLaunch(battery.distanceTo(this.camera.position), battery));
+      this.later(Math.max(0, imp.t - 1.6 - this.time), () => !m.cancelled && audio.incoming(1.6, imp.pos));
+      this.later(imp.t - this.time, () => !m.cancelled && this.mortarImpact(imp.pos, m));
+    }
+  }
+
+  private mortarImpact(pos: THREE.Vector3, m: FireMission) {
+    const p = this.player;
+    pos.y = this.terrain.heightAt(pos.x, pos.z);
+    this.fx.explosion(pos, this.wind);
+    this.fx.crater(pos, this.terrain.normalAt(pos.x, pos.z));
+    audio.explosion(pos.distanceTo(this.camera.position), pos);
+    const d = Math.hypot(pos.x - p.eye.x, pos.z - p.eye.z);
+    p.shake = Math.max(p.shake, clamp(1.35 - d / 40, 0, 1.2));
+    if (!this.running || p.state === 'dead' || p.state === 'won') return;
+    if (d < 4.5) {
+      if (this.hp > 1) {
+        this.hp--;
+        p.pulse = Math.min(185, p.pulse + 45);
+        audio.muffleFor(3, 350);
+        audio.tinnitus(3, 0.05);
+        document.body.classList.add('hurt');
+        setTimeout(() => document.body.classList.remove('hurt'), 900);
+        if (p.state === 'up' || p.state === 'rising') p.duck();
+        this.hud.toast('Splitter getroffen! Raus aus der Stellung — A / D', 4);
+      } else {
+        p.setState('dead');
+        audio.muffle(true);
+        audio.tinnitus(3, 0.05);
+        this.timeScale = 0.35;
+        document.body.classList.add('hit');
+        this.finish(false, 'Moerservolltreffer — du bist zu lange in derselben Stellung geblieben');
+      }
+    } else if (d < 15) {
+      p.pulse = Math.min(180, p.pulse + 30);
+      audio.muffleFor(2, 500);
+      audio.tinnitus(2, 0.035);
+      if (p.state === 'up' || p.state === 'rising') p.duck();
+      if (Math.hypot(m.target.x - p.eye.x, m.target.z - p.eye.z) < 20) this.hud.toast('Die naechste sitzt — wechsel die Stellung! (A / D)', 3);
+    } else if (d < 40) {
+      p.pulse = Math.min(170, p.pulse + 12);
+    }
   }
 
   private finish(won: boolean, reason: string) {
@@ -671,7 +831,7 @@ export class Game {
     this.camera.getWorldDirection(fwd);
     audio.setListener(this.camera.position, fwd);
 
-    const playerView = { eye: p.aimEye, exposed: p.exposed && p.state !== 'dead', camo: this.cover.camo, penetrable: this.cover.penetration > 0.2 };
+    const playerView = { eye: p.moving ? p.eye : p.aimEye, exposed: p.exposed && p.state !== 'dead', camo: this.cover.camo, penetrable: this.cover.penetration > 0.2 };
     const env: EnemyEnv = {
       dt, time: this.time, player: playerView, difficulty: this.diff,
       lineOfSight: (a, b) => this.terrain.lineOfSight(a, b, 0.2),
@@ -690,7 +850,19 @@ export class Game {
     };
     if (p.state !== 'intro') {
       for (const e of this.enemies) e.update(env);
-      if (this.running && p.state !== 'dead' && p.state !== 'won') this.director.update(dt, this.enemies, this.situation());
+      if (this.running && p.state !== 'dead' && p.state !== 'won') {
+        this.director.update(dt, this.enemies, this.situation());
+        const alive = this.enemies.filter((e) => !e.dead);
+        const spotterKnows = alive.some((e) => e.type === 'spotter' && e.knowsPlayer);
+        const call = this.mortar.update(dt, { time: this.time, exposed: p.exposed, knowers: alive.filter((e) => e.knowsPlayer).length, spotterKnows });
+        if (call && alive.length && !p.moving) this.callMortar(spotterKnows);
+      }
+      if (this.wasMoving && !p.moving && p.state === 'ducked') {
+        const m = this.mortar.mission;
+        const away = m && !m.cancelled && Math.hypot(m.target.x - p.eye.x, m.target.z - p.eye.z) > 20;
+        this.hud.toast(away ? `${this.cover.label} erreicht — sie beschiessen deine alte Stellung` : `${this.cover.label}: ${this.cover.hint}`, 3.5);
+      }
+      this.wasMoving = p.moving;
     } else {
       for (const e of this.enemies) e.human.update(dt);
       for (const e of this.enemies) {
@@ -776,7 +948,8 @@ export class Game {
 
     // HUD
     if (p.state === 'intro') this.hud.setHint('Lauf zur Deckung …');
-    else if (p.state === 'ducked') this.hud.setHint(p.reloadT > 0 ? 'Nachladen …' : 'Rechte Maustaste: anlegen   ·   W: aufrichten ohne Zielfernrohr');
+    else if (p.moving) this.hud.setHint('Stellungswechsel …');
+    else if (p.state === 'ducked') this.hud.setHint(p.reloadT > 0 ? 'Nachladen …' : 'Rechte Maustaste: anlegen   ·   W: aufrichten ohne Zielfernrohr   ·   A / D: Stellung wechseln');
     else if (p.state === 'up' && !p.scoped) this.hud.setHint('Rechte Maustaste halten: Zielfernrohr   ·   Leertaste: abducken');
     else if (p.scoped) this.hud.setHint(`Shift: Luft anhalten   ·   Mausrad: Zoom   ·   R + Mausrad: Fleckschuss${this.diff.tagging === 'manual' ? '   ·   Q: markieren' : ''}   ·   Leertaste: abducken`);
     else this.hud.setHint('');
@@ -787,10 +960,11 @@ export class Game {
     const r = new THREE.Vector3(-f.z, 0, f.x);
     const windRel = THREE.MathUtils.radToDeg(Math.atan2(this.wind.dot(r), this.wind.dot(f)));
     this.hud.update(realDt, danger, this.wind.length(), windRel, this.diff.showWindHud);
+    this.hud.drawMortar(this.mortar, this.time, p.eye, p.state === 'intro' || p.state === 'dead' || p.state === 'won' || !this.running);
     this.hud.drawDebug(
       this.enemies,
       this.director.status,
-      `Wind ${this.wind.length().toFixed(1)} m/s · Wetter ${this.sky.atmo.weather} · Deckung ${this.cover.label} · Seed ${this.seed} · Jev ${jevEnabled() ? 'konfiguriert' : 'nicht konfiguriert (.env.local)'} · I schliesst`,
+      `Wind ${this.wind.length().toFixed(1)} m/s · Wetter ${this.sky.atmo.weather} · Deckung ${this.cover.label} · Verrat ${Math.round(this.mortar.heat * 100)}% · Seed ${this.seed} · Jev ${jevEnabled() ? 'konfiguriert' : 'nicht konfiguriert (.env.local)'} · I schliesst`,
     );
     this.render();
   }
@@ -829,6 +1003,13 @@ export class Game {
         this.hud.hp = this.hp;
         this.hud.maxHp = this.diff.lives;
         this.hud.drawThreats(this.camera, p.scopeBlend);
+        if (p.scopeBlend < 0.5 && p.state !== 'intro' && p.state !== 'dead' && p.state !== 'won') {
+          const marks = ([-1, 1] as const)
+            .map((dir) => ({ dir, pos: this.positions[this.posIdx + dir] }))
+            .filter((m) => m.pos)
+            .map(({ dir, pos }) => ({ pos: pos.aimEye, dir, label: `${pos.cover.label} · ${Math.round(pos.aimEye.distanceTo(p.eye))} m` }));
+          this.hud.drawPositions(marks, this.camera, this.mortar.active || this.mortar.heat > 0.6);
+        }
       }
     }
     audio.update();

@@ -8,6 +8,33 @@ interface Puff {
   vel: THREE.Vector3;
   grow: number;
   baseOpacity: number;
+  /** Schwerkraft und Luftwiderstand; ohne Angabe nur fuer kurzlebige Partikel. */
+  gravity?: number;
+  drag?: number;
+}
+
+let craterTex: THREE.CanvasTexture | null = null;
+function craterTexture(): THREE.CanvasTexture {
+  if (craterTex) return craterTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d')!;
+  const grd = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+  grd.addColorStop(0, 'rgba(18,14,10,0.95)');
+  grd.addColorStop(0.45, 'rgba(38,30,22,0.85)');
+  grd.addColorStop(0.75, 'rgba(70,56,40,0.5)');
+  grd.addColorStop(1, 'rgba(70,56,40,0)');
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 128, 128);
+  // Erdbrocken am Rand
+  for (let i = 0; i < 160; i++) {
+    const a = Math.random() * Math.PI * 2, r = 30 + Math.random() * 30;
+    g.fillStyle = `rgba(${40 + Math.random() * 40},${32 + Math.random() * 30},${22 + Math.random() * 20},${0.3 + Math.random() * 0.5})`;
+    g.fillRect(64 + Math.cos(a) * r, 64 + Math.sin(a) * r, 1 + Math.random() * 3, 1 + Math.random() * 3);
+  }
+  craterTex = new THREE.CanvasTexture(c);
+  craterTex.colorSpace = THREE.SRGBColorSpace;
+  return craterTex;
 }
 
 export class Fx {
@@ -18,13 +45,52 @@ export class Fx {
 
   constructor(private scene: THREE.Scene) {}
 
-  private spawn(pos: THREE.Vector3, color: THREE.ColorRepresentation, size: number, life: number, vel: THREE.Vector3, opacity: number, additive = false, tex = this.dustTex) {
+  private spawn(pos: THREE.Vector3, color: THREE.ColorRepresentation, size: number, life: number, vel: THREE.Vector3, opacity: number, additive = false, tex = this.dustTex): Puff {
     const mat = new THREE.SpriteMaterial({ map: tex, color, transparent: true, opacity, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending, fog: !additive });
     const s = new THREE.Sprite(mat);
     s.position.copy(pos);
     s.scale.setScalar(size);
     this.scene.add(s);
-    this.puffs.push({ sprite: s, age: 0, life, vel, grow: size * 1.8, baseOpacity: opacity });
+    const p: Puff = { sprite: s, age: 0, life, vel, grow: size * 1.8, baseOpacity: opacity };
+    this.puffs.push(p);
+    return p;
+  }
+
+  /** Moerser-Einschlag: Blitz, Feuerball, Erdfontaene, Rauchsaeule. */
+  explosion(pos: THREE.Vector3, wind: THREE.Vector3) {
+    this.spawn(pos.clone().setY(pos.y + 1), 0xffd8a0, 9, 0.15, new THREE.Vector3(), 1, true, this.glowTex);
+    for (let i = 0; i < 6; i++) {
+      const v = new THREE.Vector3((Math.random() - 0.5) * 6, 3 + Math.random() * 4, (Math.random() - 0.5) * 6);
+      this.spawn(pos.clone().setY(pos.y + 0.6), 0xff9a40, 2 + Math.random() * 1.5, 0.25 + Math.random() * 0.2, v, 0.9, true, this.glowTex);
+    }
+    for (let i = 0; i < 34; i++) {
+      const a = Math.random() * Math.PI * 2, out = Math.random() * 5;
+      const v = new THREE.Vector3(Math.cos(a) * out, 7 + Math.random() * 12, Math.sin(a) * out).addScaledVector(wind, 0.2);
+      const p = this.spawn(pos.clone().setY(pos.y + 0.3), Math.random() < 0.5 ? 0x5e4c38 : 0x7d6a52, 0.8 + Math.random() * 1.4, 2 + Math.random() * 1.5, v, 0.85);
+      p.gravity = 9;
+      p.drag = 0.6;
+    }
+    for (let i = 0; i < 10; i++) {
+      const v = new THREE.Vector3((Math.random() - 0.5) * 1.5, 1.2 + Math.random() * 1.6, (Math.random() - 0.5) * 1.5).addScaledVector(wind, 0.45);
+      const p = this.spawn(pos.clone().setY(pos.y + 1 + Math.random() * 2), 0x6e6a64, 3 + Math.random() * 2, 8 + Math.random() * 5, v, 0.5);
+      p.grow = 2.2;
+      p.gravity = 0;
+      p.drag = 0.05;
+    }
+  }
+
+  /** Dunkler Krater auf dem Boden (bleibt bis Rundenende). */
+  crater(pos: THREE.Vector3, normal: THREE.Vector3) {
+    const size = 3.5 + Math.random() * 1.5;
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(size, size),
+      new THREE.MeshStandardMaterial({ map: craterTexture(), transparent: true, depthWrite: false, roughness: 1, polygonOffset: true, polygonOffsetFactor: -4 }),
+    );
+    m.position.copy(pos).addScaledVector(normal, 0.06);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+    m.rotateZ(Math.random() * Math.PI * 2);
+    m.receiveShadow = true;
+    this.scene.add(m);
   }
 
   /** Einschlag im Boden / an Material. Gut sichtbar durchs Zielfernrohr, um Schuesse zu korrigieren. */
@@ -81,10 +147,10 @@ export class Fx {
         this.puffs.splice(i, 1);
         continue;
       }
-      if (p.life < 4) {
-        p.vel.y -= 1.5 * dt;
-        p.vel.multiplyScalar(Math.exp(-2.5 * dt));
-      }
+      const grav = p.gravity ?? (p.life < 4 ? 1.5 : 0);
+      const drag = p.drag ?? (p.life < 4 ? 2.5 : 0);
+      if (grav) p.vel.y -= grav * dt;
+      if (drag) p.vel.multiplyScalar(Math.exp(-drag * dt));
       p.sprite.position.addScaledVector(p.vel, dt);
       p.sprite.scale.setScalar(p.sprite.scale.x + p.grow * dt * (1 - t));
       p.sprite.material.opacity = p.baseOpacity * (1 - t) * (1 - t);

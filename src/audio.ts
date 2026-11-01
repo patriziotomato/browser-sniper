@@ -476,6 +476,68 @@ export class Audio {
     f.setTargetAtTime(on ? 350 : 20000, t, on ? 0.15 : 0.3);
   }
 
+  // ------------------------------------------------------------ Moerser
+
+  /** Abschuss weit hinter dem Gegenhang: dumpfes "Plopp". */
+  mortarLaunch(distance: number, pos?: V3) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const dest = this.bus(this.panFor(pos), 0.9, 0.6, 0.8);
+    const vol = 0.9 / (1 + distance / 400);
+    this.tone(dest, t, 85, 38, vol, 0.35, 'sine', 0.004);
+    this.burst(dest, t, { type: 'lowpass', freq: 380, peak: vol * 0.8, attack: 0.004, decay: 0.3, pink: true });
+  }
+
+  /** Pfeifen der anfliegenden Granate, faellt in der Tonhoehe bis zum Einschlag. */
+  incoming(duration: number, pos?: V3) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(1900 + Math.random() * 300, t);
+    o.frequency.exponentialRampToValueAtTime(520, t + duration);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.09, t + duration * 0.85);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + duration + 0.02);
+    const dest = this.bus(this.panFor(pos) * 0.6, 0.3, 0, 1);
+    o.connect(g).connect(dest);
+    o.start(t);
+    o.stop(t + duration + 0.05);
+    // Luftrauschen dazu
+    this.burst(dest, t + duration * 0.4, { type: 'bandpass', freq: 1400, q: 1.2, sweepTo: 500, peak: 0.05, attack: duration * 0.5, decay: 0.1 });
+  }
+
+  /** Einschlag: Detonation, Druck, Erdregen, Echo im Tal. */
+  explosion(distance: number, pos?: V3) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime + distance / 343;
+    const vol = Math.min(1.8, 14 / (1 + distance / 4));
+    const pan = this.panFor(pos);
+    const dest = this.bus(pan, 1.1, 1.2, 1);
+    const punch = this.ctx.createGain();
+    punch.gain.value = 1;
+    punch.connect(this.shaper);
+    this.burst(punch, t, { type: 'lowpass', freq: Math.max(900, 6000 - distance * 25), sweepTo: 120, peak: vol, decay: 0.9, pink: true });
+    this.tone(punch, t, 70, 24, vol * 1.1, 0.9);
+    this.tone(punch, t, 45, 20, vol * 0.8, 1.3);
+    this.burst(dest, t + 0.05, { type: 'lowpass', freq: 600, sweepTo: 120, peak: vol * 0.4, attack: 0.05, decay: 2.4, pink: true });
+    if (distance < 40) {
+      // Erde und Steine prasseln herunter
+      for (let i = 0; i < 14; i++) this.burst(dest, t + 0.5 + Math.random() * 1.6, { type: 'highpass', freq: 1500 + Math.random() * 2500, peak: 0.08 * (1 - distance / 40), decay: 0.04 + Math.random() * 0.06 });
+    }
+  }
+
+  /** Abgehoerter Funk: Rauschen, Piepser. */
+  radio() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const dest = this.bus(-0.2, 0.05, 0, 1);
+    this.burst(dest, t, { type: 'bandpass', freq: 2200, q: 1.5, peak: 0.12, attack: 0.01, decay: 0.25 });
+    for (let i = 0; i < 3; i++) this.tone(dest, t + 0.3 + i * 0.16, 1250, 1250, 0.05, 0.09, 'square', 0.003);
+    this.burst(dest, t + 0.85, { type: 'bandpass', freq: 1800, q: 1.2, peak: 0.1, attack: 0.02, decay: 0.5 });
+  }
+
   // ------------------------------------------------------------ Koerper
 
   breath(out: boolean) {

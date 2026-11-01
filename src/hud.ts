@@ -3,6 +3,7 @@ import { Player } from './player';
 import { Enemy, INTENTS, INTENT_LABEL } from './enemies/enemy';
 import { DirectorStatus } from './ai/director';
 import { RIFLE } from './config';
+import { Mortar } from './mortar';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -18,6 +19,10 @@ export class Hud {
   private wind = $('wind');
   private toastEl = $('toast');
   private toastT = 0;
+  private heat = $('heat');
+  private heatFill = $('heat-fill');
+  private mortarEl = $('mortar');
+  private mortarText = '';
   debugOn = false;
   threats: { pos: THREE.Vector3; enemy: Enemy; until: number }[] = [];
   hp = 1;
@@ -113,6 +118,76 @@ export class Hud {
         c.fill();
         c.restore();
       }
+    }
+  }
+
+  /** Ausweichstellungen: Raute mit Taste und Name, am Bildrand als Pfeil. */
+  drawPositions(marks: { pos: THREE.Vector3; dir: -1 | 1; label: string }[], camera: THREE.Camera, urgent: boolean) {
+    if (!marks.length) return;
+    const c = this.sctx;
+    const W = this.scope.width, H = this.scope.height;
+    const dpr = W / window.innerWidth;
+    const now = performance.now();
+    const a = urgent ? 0.75 + 0.25 * Math.sin(now / 120) : 0.55;
+    const v = new THREE.Vector3();
+    c.font = `600 ${Math.round(12 * dpr)}px ui-sans-serif, system-ui, sans-serif`;
+    c.textBaseline = 'middle';
+    for (const m of marks) {
+      v.copy(m.pos).setY(m.pos.y + 0.8).project(camera);
+      let x = (v.x * 0.5 + 0.5) * W, y = (-v.y * 0.5 + 0.5) * H;
+      const behind = v.z > 1;
+      const margin = 70 * dpr;
+      const off = behind || x < margin || x > W - margin || y < margin || y > H - margin;
+      if (off) {
+        // Am Rand der Seite, auf der die Stellung liegt
+        x = m.dir < 0 ? margin : W - margin;
+        y = clampN(behind ? H / 2 : y, H * 0.3, H * 0.7);
+      }
+      const col = urgent ? `rgba(120,230,140,${a})` : `rgba(170,220,170,${a})`;
+      c.strokeStyle = col;
+      c.fillStyle = col;
+      c.lineWidth = 2 * dpr;
+      const s = 8 * dpr;
+      if (off) {
+        c.beginPath();
+        const tip = m.dir < 0 ? x - 30 * dpr : x + 30 * dpr;
+        c.moveTo(tip, y); c.lineTo(tip - m.dir * 14 * dpr, y - 10 * dpr); c.lineTo(tip - m.dir * 14 * dpr, y + 10 * dpr); c.closePath();
+        c.fill();
+      } else {
+        c.beginPath();
+        c.moveTo(x, y - s); c.lineTo(x + s, y); c.lineTo(x, y + s); c.lineTo(x - s, y); c.closePath();
+        c.stroke();
+      }
+      c.textAlign = 'center';
+      const key = m.dir < 0 ? 'A' : 'D';
+      c.fillText(`[${key}] ${m.label}`, x, y + (off ? 22 : -18) * dpr);
+    }
+    c.textBaseline = 'alphabetic';
+  }
+
+  /** Verrats-Anzeige und Countdown-Banner fuer den Moerser. */
+  drawMortar(m: Mortar, time: number, eye: THREE.Vector3, hidden: boolean) {
+    const mission = m.mission && !m.mission.cancelled ? m.mission : null;
+    this.heat.style.opacity = !hidden && (m.heat > 0.03 || mission) ? '1' : '0';
+    this.heatFill.style.width = `${Math.round(m.heat * 100)}%`;
+    this.heatFill.style.background = m.heat > 0.75 ? '#e0533f' : m.heat > 0.45 ? '#e09a3f' : '#d9c48a';
+    this.heat.classList.toggle('hot', m.heat > 0.75);
+    let text = '';
+    if (!hidden && mission) {
+      const close = Math.hypot(mission.target.x - eye.x, mission.target.z - eye.z) < 22;
+      if (time < mission.firstImpact) {
+        const sec = Math.max(0, Math.ceil(mission.firstImpact - time));
+        text = close
+          ? `<b>MOERSERFEUER IN ${sec} s</b><span>A / D: Stellung wechseln${mission.bySpotter ? ' · oder den Spotter ausschalten' : ''}</span>`
+          : `<b>MOERSERFEUER IN ${sec} s</b><span>Ziel ist deine alte Stellung</span>`;
+      } else {
+        text = close ? '<b>MOERSERFEUER — RAUS DA!</b><span>A / D: Stellung wechseln</span>' : '<b>BESCHUSS AUF ALTE STELLUNG</b><span>Nutze die Zeit</span>';
+      }
+    }
+    if (text !== this.mortarText) {
+      this.mortarText = text;
+      this.mortarEl.innerHTML = text;
+      this.mortarEl.style.opacity = text ? '1' : '0';
     }
   }
 
@@ -240,4 +315,8 @@ export class Hud {
     this.debug.innerHTML =
       `<div class="dh">Jev-Direktor: <b>${status.mode.toUpperCase()}</b> · Aufrufe ${status.calls} · Fallbacks ${status.fallbacks} · Latenz ${status.lastLatency} ms${status.lastError ? ` · <span class="err">${status.lastError}</span>` : ''}</div>${rows}<div class="dh">${extra}</div>`;
   }
+}
+
+function clampN(v: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, v));
 }

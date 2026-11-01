@@ -141,6 +141,7 @@ Gebaut mit Three.js, TypeScript und Vite. Realistische Optik entsteht vor allem 
 | Schießen | linke Maustaste |
 | Abducken | Leertaste oder S |
 | Aufrichten ohne Zielfernrohr | W |
+| Stellung wechseln (links / rechts) | A / D |
 | Luft anhalten | Shift (halten) |
 | Zoom | Mausrad |
 | Zeroing | R + Mausrad |
@@ -182,3 +183,10 @@ Nach den ersten Testrunden angepasst:
 - **Debug-Overlay** auf Taste I (F3 ist auf dem Mac belegt), mit Gegner-Markierungen.
 - **Menü:** Grafikstufe, Maus-Empfindlichkeit, Lautstärke, Statistik.
 - **Assets:** Texturen, Modelle und Sounds sind prozedural erzeugt statt aus Poly Haven, Mixamo und Freesound.
+- **Moerserbeschuss und Stellungswechsel:** Auf dem Grat stehen neben deiner Deckung bis zu zwei Ausweichstellungen
+  (25–60 m links und rechts, andere Deckungsart). Jeder eigene Schuss und jede Sekunde, in der dich ein Gegner ungedeckt
+  sieht, fuellt die Anzeige „Stellung verraten“. Bei 100 % fordert der Gegner Moerserfeuer an: Countdown
+  (16 / 13 / 11 / 9 s je Stufe, 2 s weniger, wenn der Spotter funkt), dann drei Gabelschuesse, die vom Gegenhang her
+  auf dich zuwandern, und drei Schuss Wirkungsfeuer. Wer bleibt, wird getroffen. Mit A / D sprintest du geduckt hinter
+  dem Grat zur naechsten Deckung (kurz ungedeckt, aber schwer zu treffen); danach verlieren die Gegner deine Spur und
+  der Beschuss geht auf die alte Stellung. Faellt der Spotter vor dem ersten Einschlag, platzt der Feuerauftrag.

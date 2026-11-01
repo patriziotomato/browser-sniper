@@ -6,7 +6,7 @@ import { Terrain } from './world/terrain';
 import { audio } from './audio';
 import { zeroAngle } from './ballistics';
 
-export type PlayerState = 'intro' | 'ducked' | 'rising' | 'up' | 'lowering' | 'dead' | 'won';
+export type PlayerState = 'intro' | 'moving' | 'ducked' | 'rising' | 'up' | 'lowering' | 'dead' | 'won';
 
 const MIL = 0.001;
 
@@ -36,14 +36,16 @@ export class Player {
   readonly aimEye = new THREE.Vector3();
   readonly duckEye = new THREE.Vector3();
   readonly eye = new THREE.Vector3();
-  private introPath: THREE.CatmullRomCurve3;
-  private introDur = 3.6;
+  private runPath: THREE.CatmullRomCurve3;
+  private runDur = 3.6;
+  /** Kamerawackeln (Explosionen), klingt von selbst ab. */
+  shake = 0;
   private deathRoll = 0;
   private lastStep = -1;
   rightHeld = false;
   zeroKeyHeld = false;
 
-  constructor(private camera: THREE.PerspectiveCamera, private terrain: Terrain, readonly cover: CoverDef, enemyCenter: THREE.Vector3, rngLateral: number) {
+  constructor(private camera: THREE.PerspectiveCamera, private terrain: Terrain, public cover: CoverDef, enemyCenter: THREE.Vector3, rngLateral: number) {
     cover.group.updateMatrixWorld(true);
     this.aimEye.copy(cover.aimEye).applyMatrix4(cover.group.matrixWorld);
     this.duckEye.copy(cover.duckEye).applyMatrix4(cover.group.matrixWorld);
@@ -63,11 +65,45 @@ export class Player {
       if (i === 6) p.copy(this.duckEye);
       pts.push(p);
     }
-    this.introPath = new THREE.CatmullRomCurve3(pts);
+    this.runPath = new THREE.CatmullRomCurve3(pts);
     this.eye.copy(pts[0]);
   }
 
+  /** Geduckter Sprint hinter dem Grat zu einer anderen Deckung. */
+  relocate(cover: CoverDef, enemyCenter: THREE.Vector3) {
+    const from = this.eye.clone();
+    this.cover = cover;
+    cover.group.updateMatrixWorld(true);
+    this.aimEye.copy(cover.aimEye).applyMatrix4(cover.group.matrixWorld);
+    this.duckEye.copy(cover.duckEye).applyMatrix4(cover.group.matrixWorld);
+    this.baseYaw = Math.atan2(-(enemyCenter.x - this.aimEye.x), -(enemyCenter.z - this.aimEye.z));
+    this.yaw = this.baseYaw;
+    this.pitch = Math.atan2(enemyCenter.y - this.aimEye.y, Math.hypot(enemyCenter.x - this.aimEye.x, enemyCenter.z - this.aimEye.z));
+    // Weg leicht hinter der Kante (vom Gegner weg), damit der Grat dich teilweise verdeckt
+    const back = new THREE.Vector3(Math.sin(this.baseYaw), 0, Math.cos(this.baseYaw));
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 8; i++) {
+      const t = i / 8;
+      const p = from.clone().lerp(this.duckEye, t).addScaledVector(back, Math.sin(t * Math.PI) * 4.5);
+      p.y = this.terrain.heightAt(p.x, p.z) + 1.2;
+      if (i === 0) p.copy(from);
+      if (i === 8) p.copy(this.duckEye);
+      pts.push(p);
+    }
+    this.runPath = new THREE.CatmullRomCurve3(pts);
+    this.runDur = 0.8 + this.runPath.getLength() / 7.5;
+    this.holdingBreath = false;
+    this.rightHeld = false;
+    this.setState('moving');
+    audio.rustle();
+  }
+
+  get moving(): boolean {
+    return this.state === 'moving';
+  }
+
   get exposed(): boolean {
+    if (this.state === 'moving') return this.stateT > 0.5 && this.stateT < this.runDur - 0.5;
     return this.state === 'up' || (this.state === 'rising' && this.stateT > 0.25) || (this.state === 'lowering' && this.stateT < 0.12);
   }
 
@@ -80,7 +116,7 @@ export class Player {
   }
 
   look(dx: number, dy: number) {
-    if (this.state === 'intro' || this.state === 'dead' || this.state === 'won') return;
+    if (this.state === 'intro' || this.state === 'moving' || this.state === 'dead' || this.state === 'won') return;
     const sens = 0.0022 * settings.sensitivity * (this.fov / RIFLE.baseFov);
     this.yaw -= dx * sens;
     this.pitch -= dy * sens;
@@ -172,7 +208,7 @@ export class Player {
     const restPulse = 64 + danger * 55;
     this.pulse = damp(this.pulse, restPulse, this.state === 'ducked' ? 0.09 : 0.055, dt);
     audio.heartRate = this.pulse;
-    audio.breathing = this.state === 'intro' ? 0.6 : clamp((this.pulse - 100) / 60, 0, 1) * (this.holdingBreath ? 0 : 1);
+    audio.breathing = this.state === 'intro' || this.state === 'moving' ? 0.6 : clamp((this.pulse - 100) / 60, 0, 1) * (this.holdingBreath ? 0 : 1);
     audio.heartVolume = clamp((this.pulse - 85) / 70, 0, 0.9) * 0.6 + danger * 0.5;
 
     if (this.boltT > 0) this.boltT -= dt;
@@ -196,10 +232,11 @@ export class Player {
 
     let target: THREE.Vector3;
     switch (this.state) {
-      case 'intro': {
-        const t = clamp(this.stateT / this.introDur, 0, 1);
+      case 'intro':
+      case 'moving': {
+        const t = clamp(this.stateT / this.runDur, 0, 1);
         const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        this.introPath.getPointAt(e, this.eye);
+        this.runPath.getPointAt(e, this.eye);
         const bob = Math.sin(this.stateT * 15) * 0.07 * (1 - smoothstep(0.75, 1, t));
         const stepPhase = Math.floor((this.stateT * 15) / Math.PI);
         if (stepPhase !== this.lastStep && t < 0.92) {
@@ -208,8 +245,8 @@ export class Player {
         }
         this.eye.y += bob;
         if (t >= 1) {
+          this.pulse = this.state === 'intro' ? 150 : Math.max(this.pulse, 140);
           this.setState('ducked');
-          this.pulse = 150;
         }
         target = this.eye;
         break;
@@ -232,7 +269,7 @@ export class Player {
       default:
         target = this.duckEye;
     }
-    if (this.state !== 'intro') this.eye.lerp(target, 1 - Math.exp(-14 * dt));
+    if (this.state !== 'intro' && this.state !== 'moving') this.eye.lerp(target, 1 - Math.exp(-14 * dt));
 
     // Zielfernrohr
     this.scoped = this.state === 'up' && this.rightHeld;
@@ -264,10 +301,10 @@ export class Player {
     const yaw = this.yaw + this.sway.x;
     const pitch = this.pitch + this.sway.y + this.recoil * this.recoil * 0.035;
     let lookYaw = yaw, lookPitch = pitch;
-    if (this.state === 'intro') {
-      const t = clamp(this.stateT / this.introDur, 0, 1);
+    if (this.state === 'intro' || this.state === 'moving') {
+      const t = clamp(this.stateT / this.runDur, 0, 1);
       const dir = new THREE.Vector3();
-      this.introPath.getTangentAt(Math.min(0.99, t), dir);
+      this.runPath.getTangentAt(Math.min(0.99, t), dir);
       const runYaw = Math.atan2(-dir.x, -dir.z);
       lookYaw = lerp(runYaw, this.baseYaw, smoothstep(0.55, 1, t));
       lookPitch = lerp(-0.12, this.pitch, smoothstep(0.6, 1, t));
@@ -277,6 +314,15 @@ export class Player {
     this.camera.rotation.y = lookYaw;
     this.camera.rotation.x = lookPitch;
     this.camera.rotation.z = this.state === 'dead' ? this.deathRoll * 0.8 : 0;
+    if (this.shake > 0.001) {
+      const k = this.shake * this.shake;
+      const n = performance.now() / 1000;
+      this.camera.rotation.x += (Math.sin(n * 47) + Math.sin(n * 83) * 0.5) * 0.02 * k;
+      this.camera.rotation.y += (Math.sin(n * 53 + 1) + Math.sin(n * 71) * 0.5) * 0.02 * k;
+      this.camera.rotation.z += Math.sin(n * 39 + 2) * 0.03 * k;
+      this.camera.position.y += Math.sin(n * 61) * 0.05 * k;
+      this.shake = Math.max(0, this.shake - dt * 1.6);
+    }
     this.camera.fov = this.fov;
     this.camera.updateProjectionMatrix();
   }

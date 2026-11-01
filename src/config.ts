@@ -28,6 +28,9 @@ export interface Difficulty {
   tagDistance: boolean;
   /** Treffer, die du einstecken kannst. */
   lives: number;
+  /** Moerser: wie stark ein eigener Schuss die Stellung verraet (0..1) und Sekunden bis zum ersten Einschlag. */
+  mortarPerShot: number;
+  mortarCountdown: number;
 }
 
 export const DIFFICULTIES: Record<DifficultyId, Difficulty> = {
@@ -35,21 +38,25 @@ export const DIFFICULTIES: Record<DifficultyId, Difficulty> = {
     id: 'leicht', label: 'Leicht', enemyCount: [2, 3], distance: [150, 320],
     reactionWindow: 2.0, aimTime: 3.2, detection: 0.4, enemyAccuracy: 0.35,
     maxWind: 3, showWindHud: true, showTrace: true, tagging: 'auto', tagDistance: true, lives: 3,
+    mortarPerShot: 0.2, mortarCountdown: 16,
   },
   normal: {
     id: 'normal', label: 'Normal', enemyCount: [2, 4], distance: [200, 450],
     reactionWindow: 1.5, aimTime: 2.6, detection: 0.6, enemyAccuracy: 0.55,
     maxWind: 6, showWindHud: true, showTrace: false, tagging: 'manual', tagDistance: true, lives: 2,
+    mortarPerShot: 0.26, mortarCountdown: 13,
   },
   schwer: {
     id: 'schwer', label: 'Schwer', enemyCount: [3, 5], distance: [250, 600],
     reactionWindow: 1.15, aimTime: 2.0, detection: 0.85, enemyAccuracy: 0.75,
     maxWind: 9, showWindHud: false, showTrace: false, tagging: 'manual', tagDistance: false, lives: 2,
+    mortarPerShot: 0.32, mortarCountdown: 11,
   },
   elite: {
     id: 'elite', label: 'Elite', enemyCount: [4, 5], distance: [300, 780],
     reactionWindow: 0.85, aimTime: 1.5, detection: 1.1, enemyAccuracy: 0.9,
     maxWind: 12, showWindHud: false, showTrace: false, tagging: 'none', tagDistance: false, lives: 1,
+    mortarPerShot: 0.38, mortarCountdown: 9,
   },
 };
 
