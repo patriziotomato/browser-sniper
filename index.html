@@ -34,6 +34,22 @@
     #debug .dh { color: var(--accent); }
     #debug .dead { opacity: .45; }
     #debug .err { color: #ff8a7a; }
+    #feed { position: fixed; right: 22px; top: 64px; width: 300px; font-size: 12.5px; line-height: 1.5; pointer-events: none; opacity: 0; transition: opacity .3s; text-align: right; text-shadow: 0 1px 3px #000; }
+    #feed div { margin-bottom: 3px; }
+    #feed small { color: var(--muted); }
+    .src { display: inline-block; font: 600 10px ui-monospace, monospace; padding: 1px 5px; border-radius: 3px; letter-spacing: .05em; vertical-align: 1px; }
+    .src.jev { background: rgba(80,170,240,.3); color: #a9dcff; }
+    .src.lokal { background: rgba(255,255,255,.14); color: #ddd; }
+    #debug .bars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 3px; }
+    #debug .bar { position: relative; display: block; height: 15px; background: rgba(255,255,255,.07); border-radius: 2px; overflow: hidden; }
+    #debug .bar i { position: absolute; inset: 0 auto 0 0; background: rgba(217,164,65,.35); }
+    #debug .bar.cur i { background: rgba(217,164,65,.75); }
+    #debug .bar em { position: relative; font-style: normal; font-size: 10px; padding-left: 3px; white-space: nowrap; }
+    #debug { max-width: 700px; }
+    #debug .jev { padding: 6px 8px; border-radius: 4px; margin-bottom: 8px; font-weight: 600; }
+    #debug .jev small { font-weight: 400; color: inherit; opacity: .85; }
+    #debug .jev.ok { background: rgba(70,160,90,.25); color: #9be0a8; }
+    #debug .jev.off { background: rgba(200,60,40,.28); color: #ffb3a6; }
     #debug small { color: var(--muted); }
     .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(13,15,14,.72), rgba(0,0,0,.92)); z-index: 10; }
     .screen.hidden { display: none; }
@@ -93,6 +109,7 @@
     body.touch #hint { top: calc(56px + env(safe-area-inset-top)); bottom: auto; font-size: 12px; padding: 0 140px; }
     body.touch #toast { top: calc(12px + env(safe-area-inset-top)); white-space: normal; max-width: calc(100vw - 260px); text-align: center; font-size: 13px; }
     body.touch #brief { left: calc(12px + env(safe-area-inset-left)); top: calc(66px + env(safe-area-inset-top)); bottom: auto; max-width: min(380px, 48vw); font-size: 12px; z-index: 6; }
+    body.touch #feed { right: calc(76px + env(safe-area-inset-right)); top: calc(58px + env(safe-area-inset-top)); width: 210px; font-size: 11px; }
     body.touch #wind { top: calc(12px + env(safe-area-inset-top)); right: calc(74px + env(safe-area-inset-right)); }
     body.touch #scope-info { gap: 10px; font-size: 11.5px; bottom: calc(8px + env(safe-area-inset-bottom)); }
     body.touch #breath { bottom: calc(34px + env(safe-area-inset-bottom)); }
@@ -143,6 +160,7 @@
       <button class="tb" data-t="fire">Feuer<small>5/5</small></button>
     </div>
   </div>
+  <div id="feed"></div>
 
   <div id="menu" class="screen">
     <div class="panel">
@@ -169,6 +187,7 @@
         <kbd>Mausrad</kbd><span>Zoom 4–16×</span>
         <kbd>R + Mausrad</kbd><span>Fleckschussdistanz (Zeroing) in 50-m-Schritten</span>
         <kbd>Q / mittlere Maustaste</kbd><span>Gegner im Fadenkreuz markieren (Normal, Schwer)</span>
+        <kbd>K</kbd><span>KI-Entscheidungen (Feed rechts) ein/aus</span>
         <kbd>Tab (halten)</kbd><span>Funk-Einweisung erneut anzeigen</span>
         <kbd>I</kbd><span>Debug-Overlay mit Gegner-Markierungen, KI und Jev</span>
         <kbd>Esc</kbd><span>Pause</span>

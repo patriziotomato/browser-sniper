@@ -16,7 +16,9 @@ export interface Situation {
 }
 
 export interface DirectorStatus {
-  mode: 'jev' | 'lokal' | 'aus';
+  /** jev = antwortet · fehler = letzter Aufruf fehlgeschlagen · pausiert = nach Fehlerserie ausgesetzt · aus = in diesem Build nicht verfuegbar */
+  mode: 'jev' | 'fehler' | 'pausiert' | 'aus';
+  pausedFor: number;
   lastLatency: number;
   lastError: string;
   calls: number;
@@ -82,25 +84,28 @@ function mask(e: Enemy, p: Record<Intent, number>, s: Situation): Record<Intent,
 }
 
 export class Director {
-  status: DirectorStatus = { mode: jevEnabled() ? 'jev' : 'lokal', lastLatency: 0, lastError: '', calls: 0, fallbacks: 0 };
+  status: DirectorStatus = { mode: jevEnabled() ? 'jev' : 'aus', pausedFor: 0, lastLatency: 0, lastError: '', calls: 0, fallbacks: 0 };
   private timer = 0;
   private inflight = false;
   private failStreak = 0;
+  private pausedUntil = 0;
   private enabled = jevEnabled();
 
   constructor(private rng: Rng) {}
 
   update(dt: number, enemies: Enemy[], s: Situation, force = false) {
     this.timer -= dt;
+    this.status.pausedFor = Math.max(0, Math.ceil((this.pausedUntil - performance.now()) / 1000));
     if (!force && this.timer > 0) return;
     this.timer = JEV.interval;
     const alive = enemies.filter((e) => !e.dead);
     if (alive.length === 0) return;
 
-    if (this.enabled && !this.inflight && this.failStreak < 6) {
+    if (this.enabled && this.inflight) return; // laufende Anfrage abwarten, Gegner behalten ihre Absicht
+    const paused = performance.now() < this.pausedUntil;
+    if (this.enabled && !paused) {
       this.decideWithJev(alive, enemies, s);
     } else {
-      if (this.enabled) this.status.mode = 'lokal';
       for (const e of alive) this.apply(e, fallbackProbs(e, s), 'lokal', s);
     }
   }
@@ -151,7 +156,13 @@ export class Director {
     } catch (err) {
       this.failStreak++;
       this.status.fallbacks++;
-      this.status.mode = 'lokal';
+      this.status.mode = 'fehler';
+      // Nach 6 Fehlern in Folge 20 s aussetzen, dann erneut versuchen
+      if (this.failStreak >= 6) {
+        this.pausedUntil = performance.now() + 20000;
+        this.failStreak = 5;
+        this.status.mode = 'pausiert';
+      }
       this.status.lastError = err instanceof Error ? (err.name === 'AbortError' ? `Timeout > ${JEV.timeoutMs} ms` : err.message) : String(err);
       for (const e of alive) if (!e.dead) this.apply(e, fallbackProbs(e, s), 'lokal', s);
     } finally {
@@ -169,6 +180,6 @@ export class Director {
       r -= p[i];
       if (r <= 0) { pick = i; break; }
     }
-    e.setIntent(pick, source);
+    e.setIntent(pick, source, p[pick]);
   }
 }

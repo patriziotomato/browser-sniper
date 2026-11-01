@@ -177,6 +177,7 @@ export class Game {
     this.hits = this.kills = this.longest = 0;
     this.hp = this.diff.lives;
     this.hud.threats = [];
+    this.hud.resetFeed();
     this.lastShotTime = -99;
     this.endScheduled = false;
 
@@ -800,10 +801,11 @@ export class Game {
     const r = new THREE.Vector3(-f.z, 0, f.x);
     const windRel = THREE.MathUtils.radToDeg(Math.atan2(this.wind.dot(r), this.wind.dot(f)));
     this.hud.update(realDt, danger, this.wind.length(), windRel, this.diff.showWindHud);
+    this.hud.updateFeed(this.enemies, this.hud.feedOn && p.state !== 'intro');
     this.hud.drawDebug(
       this.enemies,
       this.director.status,
-      `Wind ${this.wind.length().toFixed(1)} m/s · Wetter ${this.sky.atmo.weather} · Deckung ${this.cover.label} · Seed ${this.seed} · Jev ${jevEnabled() ? 'konfiguriert' : 'nicht konfiguriert (.env.local)'} · I schliesst`,
+      `Wind ${this.wind.length().toFixed(1)} m/s · Wetter ${this.sky.atmo.weather} · Deckung ${this.cover.label} · Seed ${this.seed} · I schliesst · K: Feed ein/aus`,
     );
     this.render();
   }
