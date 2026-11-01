@@ -228,6 +228,8 @@ document.addEventListener('keydown', (e) => {
       break;
     case 'KeyS': p.duck(); break;
     case 'KeyW': p.raise(); break;
+    case 'KeyA': if (!e.repeat) game.relocate(-1); break;
+    case 'KeyD': if (!e.repeat) game.relocate(1); break;
     case 'ShiftLeft': case 'ShiftRight': p.setBreath(true); break;
     case 'KeyR': p.zeroKeyHeld = true; break;
     case 'KeyQ': game.tag(); break;

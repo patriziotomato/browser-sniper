@@ -106,6 +106,8 @@ export function setupTouch(game: Game, hooks: TouchHooks) {
   press('zeroUp', () => game.player.stepZero(1));
   press('zeroDown', () => game.player.stepZero(-1));
   press('tag', () => game.tag());
+  press('moveL', () => game.relocate(-1));
+  press('moveR', () => game.relocate(1));
   press('funk', () => (game.hud.briefHeld = true), () => (game.hud.briefHeld = false));
   // Pause geht auch, wenn gerade nichts aktiv ist
   el('pause').addEventListener('pointerdown', (e) => {
@@ -142,7 +144,7 @@ export function setupTouch(game: Game, hooks: TouchHooks) {
       return;
     }
     const p = game.player;
-    const busy = p.state === 'intro' || p.state === 'dead' || p.state === 'won' || game.cinematic;
+    const busy = p.state === 'intro' || p.state === 'moving' || p.state === 'dead' || p.state === 'won' || game.cinematic;
     const up = p.state === 'up' || p.state === 'rising';
     const reloading = p.reloadT > 0;
     const state = [

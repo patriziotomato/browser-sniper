@@ -73,6 +73,14 @@
     .stats div { background: rgba(255,255,255,.05); border-radius: 6px; padding: 10px 12px; }
     .stats b { display: block; font-size: 22px; }
     .stats span { font-size: 12px; color: var(--muted); }
+    #heat { position: fixed; top: 58px; right: 22px; width: 150px; font: 11px ui-monospace, monospace; letter-spacing: .12em; color: var(--muted); opacity: 0; transition: opacity .4s; pointer-events: none; }
+    #heat .bar { height: 4px; margin-top: 5px; background: rgba(255,255,255,.12); border-radius: 2px; overflow: hidden; }
+    #heat-fill { height: 100%; width: 0; transition: width .3s, background .3s; }
+    #heat.hot { color: #ff8a7a; animation: pulse .6s ease-in-out infinite alternate; }
+    #mortar { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); padding: 10px 22px; text-align: center; background: rgba(60,6,0,.55); border: 1px solid rgba(255,90,60,.55); border-radius: 6px; opacity: 0; transition: opacity .3s; pointer-events: none; animation: pulse .5s ease-in-out infinite alternate; }
+    #mortar b { display: block; font: 700 20px ui-monospace, monospace; letter-spacing: .14em; color: #ffb4a4; }
+    #mortar span { font-size: 13px; color: #f1d8cf; }
+    @keyframes pulse { from { filter: brightness(.85); } to { filter: brightness(1.25); } }
     #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #000; z-index: 20; font-size: 14px; color: var(--muted); letter-spacing: .1em; }
     #loading.hidden { display: none; }
 
@@ -105,7 +113,10 @@
     #touch .scope-only, #touch .tag-only { display: none; }
     #touch.scoped .scope-only { display: flex; }
     #touch.tagging.up:not(.busy) .tag-only { display: flex; }
-    #touch.busy .br, #touch.busy .lb, #touch.busy .zoom { display: none; }
+    #touch.busy .br, #touch.busy .lb, #touch.busy .zoom, #touch.busy .mv { display: none; }
+    #touch .mv { left: calc(12px + env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 6px; font: 10px ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    #touch .mv .tb { position: static; width: 48px; height: 48px; font-size: 18px; }
+    #touch.scoped .unscoped-only { display: none; }
     body.touch #hint { top: calc(56px + env(safe-area-inset-top)); bottom: auto; font-size: 12px; padding: 0 140px; }
     body.touch #toast { top: calc(12px + env(safe-area-inset-top)); white-space: normal; max-width: calc(100vw - 260px); text-align: center; font-size: 13px; }
     body.touch #brief { left: calc(12px + env(safe-area-inset-left)); top: calc(66px + env(safe-area-inset-top)); bottom: auto; max-width: min(380px, 48vw); font-size: 12px; z-index: 6; }
@@ -114,6 +125,9 @@
     body.touch #scope-info { gap: 10px; font-size: 11.5px; bottom: calc(8px + env(safe-area-inset-bottom)); }
     body.touch #breath { bottom: calc(34px + env(safe-area-inset-bottom)); }
     body.touch button { min-height: 44px; }
+    body.touch #heat { top: calc(66px + env(safe-area-inset-top)); right: auto; left: calc(14px + env(safe-area-inset-left)); width: 96px; font-size: 10px; }
+    body.touch #mortar { top: calc(84px + env(safe-area-inset-top)); padding: 6px 14px; }
+    body.touch #mortar b { font-size: 16px; }
     .rotate { display: none; color: var(--accent); }
     @media (orientation: portrait) { body.touch .rotate { display: block; } }
     /* Menue auf niedrigen Bildschirmen (Handy quer) */
@@ -139,6 +153,8 @@
   <div id="toast"></div>
   <div id="brief"></div>
   <div id="wind"></div>
+  <div id="heat"><span class="desk-only">STELLUNG VERRATEN</span><span class="touch-only">VERRATEN</span><div class="bar"><div id="heat-fill"></div></div></div>
+  <div id="mortar"></div>
   <div id="debug"></div>
   <div id="touch">
     <div class="cl tl">
@@ -152,6 +168,11 @@
     <div class="cl lb">
       <button class="tb tag-only" data-t="tag">Markieren</button>
       <div class="zero scope-only"><em>Fleck</em><button class="tb" data-t="zeroDown" aria-label="Fleckschuss kuerzer">−</button><span id="t-zero">300 m</span><button class="tb" data-t="zeroUp" aria-label="Fleckschuss weiter">+</button></div>
+    </div>
+    <div class="cl mv unscoped-only">
+      <button class="tb" data-t="moveL" aria-label="Stellung links">◀</button>
+      <span>Stellung</span>
+      <button class="tb" data-t="moveR" aria-label="Stellung rechts">▶</button>
     </div>
     <div class="cl br">
       <button class="tb" data-t="breath">Atem</button>
@@ -183,8 +204,9 @@
         <kbd>Linke Maustaste</kbd><span>Schiessen</span>
         <kbd>Leertaste / S</kbd><span>Abducken (laedt geduckt automatisch nach)</span>
         <kbd>W</kbd><span>Aufrichten ohne Zielfernrohr</span>
+        <kbd>A / D</kbd><span>Stellung wechseln: Sprint zur Deckung links / rechts (kurz ungedeckt)</span>
         <kbd>Shift</kbd><span>Luft anhalten (max. ~6 s)</span>
-        <kbd>Mausrad</kbd><span>Zoom 4–16×</span>
+        <kbd>Mausrad</kbd><span>Zoom 4–20×</span>
         <kbd>R + Mausrad</kbd><span>Fleckschussdistanz (Zeroing) in 50-m-Schritten</span>
         <kbd>Q / mittlere Maustaste</kbd><span>Gegner im Fadenkreuz markieren (Normal, Schwer)</span>
         <kbd>K</kbd><span>KI-Entscheidungen (Feed rechts) ein/aus</span>
