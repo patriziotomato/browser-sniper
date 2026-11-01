@@ -34,7 +34,9 @@ Request/Antwort-Format steckt komplett in `src/ai/jev.ts`.
 
 ## Struktur
 
-- `src/world/` Terrain, Himmel/Wetter, Vegetation, Deckungen, prozedurale Texturen
+- `src/world/` Terrain, Himmel/Wetter/Wolken, Vegetation, Deckungen, prozedurale Texturen
+- `src/world/atmosphere.ts` Hoehennebel mit Sonnenstreuung und Shader-Patches fuer alle Materialien
+- `src/world/groundlight.ts` vorberechnete Gelaende- und Baumschatten fuer grosse Distanzen
 - `src/ballistics.ts` Flugbahnsimulation (Widerstand, Wind, Zeroing)
 - `src/player.ts` Kamera, Zielfernrohr, Atmung, Puls, Ducken
 - `src/enemies/` Gegnermodell, Animation, Wahrnehmung, Zielablauf
