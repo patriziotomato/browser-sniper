@@ -73,6 +73,13 @@ export class Game {
   enemies: Enemy[] = [];
   private director!: Director;
   private diff: Difficulty = DIFFICULTIES.normal;
+  get difficulty(): Difficulty {
+    return this.diff;
+  }
+  /** Laeuft gerade die Kugel-Kamera (Zeitlupe)? */
+  get cinematic(): boolean {
+    return !!this.bulletCam;
+  }
   private props: PropBox[] = [];
   private flags: Flag[] = [];
   private fires: THREE.Vector3[] = [];
@@ -777,7 +784,13 @@ export class Game {
 
     // HUD
     if (p.state === 'intro') this.hud.setHint('Lauf zur Deckung …');
-    else if (p.state === 'ducked') this.hud.setHint(p.reloadT > 0 ? 'Nachladen …' : 'Rechte Maustaste: anlegen   ·   W: aufrichten ohne Zielfernrohr');
+    else if (p.state === 'ducked' && p.reloadT > 0) this.hud.setHint('Nachladen …');
+    else if (settings.touch) {
+      if (p.state === 'ducked') this.hud.setHint('Wischen: umsehen   ·   Zielfernrohr-Taste: anlegen');
+      else if (p.state === 'up' && !p.scoped) this.hud.setHint('Zielfernrohr-Taste: Scope   ·   Ducken-Taste: abtauchen');
+      else if (p.scoped) this.hud.setHint('Wischen: zielen   ·   Zwei Finger: Zoom   ·   Atem-Taste: Luft anhalten');
+      else this.hud.setHint('');
+    } else if (p.state === 'ducked') this.hud.setHint('Rechte Maustaste: anlegen   ·   W: aufrichten ohne Zielfernrohr');
     else if (p.state === 'up' && !p.scoped) this.hud.setHint('Rechte Maustaste halten: Zielfernrohr   ·   Leertaste: abducken');
     else if (p.scoped) this.hud.setHint(`Shift: Luft anhalten   ·   Mausrad: Zoom   ·   R + Mausrad: Fleckschuss${this.diff.tagging === 'manual' ? '   ·   Q: markieren' : ''}   ·   Leertaste: abducken`);
     else this.hud.setHint('');

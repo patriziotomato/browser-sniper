@@ -16,6 +16,17 @@ Der Browser oeffnet sich auf http://localhost:5173. Grafikstufe im Menue waehlba
 https://patriziotomato.github.io/browser-sniper/ (wird bei jedem Push auf `main` per GitHub Actions gebaut).
 Online gibt es keinen Server fuer den Jev-Proxy, dort steuert die lokale KI die Gegner.
 
+## Auf dem Handy
+
+Auf Handys und Tablets schaltet das Spiel automatisch auf Touch-Steuerung (im Menue unter „Steuerung“ umstellbar,
+am Desktop zum Testen `?touch=1` an die URL haengen). Gespielt wird im Querformat:
+
+- **Wischen** zum Umsehen und Zielen, im Zielfernrohr feiner; **zwei Finger** zoomen
+- Rechts: **Feuer**, **Anlegen/Scope**, **Ducken/Hoch**, **Atem** (Luft anhalten an/aus)
+- Links: **Pause**, **Funk** (halten), im Zielfernrohr **Fleck −/+** und auf Normal/Schwer **Markieren**
+
+Grafik startet auf dem Handy auf „Niedrig“. Ueber „Zum Home-Bildschirm“ laeuft das Spiel ohne Browserleiste.
+
 ## Jev (Gegner-Taktik)
 
 In `.env.local`:
@@ -40,3 +51,4 @@ Request/Antwort-Format steckt komplett in `src/ai/jev.ts`.
 - `src/enemies/` Gegnermodell, Animation, Wahrnehmung, Zielablauf
 - `src/ai/` Jev-Client und Taktik-Direktor mit lokaler Fallback-KI
 - `src/game.ts` Rundenablauf, Treffer, Bullet-Cam
+- `src/touch.ts` Touch-Steuerung fuers Handy

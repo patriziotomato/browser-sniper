@@ -182,3 +182,4 @@ Nach den ersten Testrunden angepasst:
 - **Debug-Overlay** auf Taste I (F3 ist auf dem Mac belegt), mit Gegner-Markierungen.
 - **Menü:** Grafikstufe, Maus-Empfindlichkeit, Lautstärke, Statistik.
 - **Assets:** Texturen, Modelle und Sounds sind prozedural erzeugt statt aus Poly Haven, Mixamo und Freesound.
+- **Handy-Variante:** Touch-Steuerung im Querformat (Wischen zum Zielen, Pinch-Zoom, Tasten für Feuer, Anlegen, Ducken, Atem, Fleckschuss, Markieren, Funk). Wird auf Touch-Geräten automatisch aktiv, Grafik startet auf „Niedrig“; hochkant pausiert das Spiel.
