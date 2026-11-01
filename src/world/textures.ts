@@ -42,73 +42,118 @@ export function camoTexture(): THREE.CanvasTexture {
 }
 
 export function bushCardTexture(dry = false): THREE.CanvasTexture {
-  const [c, g] = canvas(256, 256);
-  g.clearRect(0, 0, 256, 256);
-  for (let i = 0; i < 420; i++) {
-    const x = 128 + rand(-1, 1) * rand(0, 115), y = 128 + rand(-1, 1) * rand(0, 115);
-    if ((x - 128) ** 2 + (y - 128) ** 2 > 118 * 118) continue;
-    const h = dry ? rand(55, 75) : rand(70, 110), l = rand(14, 32);
-    g.fillStyle = `hsl(${h},${rand(30, 55)}%,${l}%)`;
+  const [c, g] = canvas(512, 512);
+  g.clearRect(0, 0, 512, 512);
+  // Zweige
+  g.strokeStyle = '#33261a';
+  g.lineCap = 'round';
+  for (let i = 0; i < 14; i++) {
+    g.lineWidth = rand(1.5, 3);
+    g.beginPath();
+    g.moveTo(256 + rand(-20, 20), 505);
+    g.quadraticCurveTo(256 + rand(-120, 120), 320, 256 + rand(-220, 220), rand(40, 260));
+    g.stroke();
+  }
+  // Blaetter: spitz zulaufend, mit Verlauf und Mittelrippe; innen dunkler, aussen heller
+  for (let i = 0; i < 1500; i++) {
+    const a = rand(0, Math.PI * 2), r = Math.sqrt(Math.random()) * 236;
+    const x = 256 + Math.cos(a) * r, y = 256 + Math.sin(a) * r * 0.92;
+    const outer = r / 236;
+    const len = rand(9, 17), wid = len * rand(0.32, 0.45);
+    const hue = dry ? rand(48, 70) : rand(78, 112);
+    const light = 14 + outer * 16 + rand(-3, 6) + (y < 200 ? 4 : 0);
+    const sat = rand(30, 55);
     g.save();
     g.translate(x, y);
-    g.rotate(rand(0, Math.PI));
+    g.rotate(a + rand(-0.9, 0.9));
+    const grad = g.createLinearGradient(0, -wid, 0, wid);
+    grad.addColorStop(0, `hsl(${hue},${sat}%,${light + 7}%)`);
+    grad.addColorStop(1, `hsl(${hue + 6},${sat}%,${Math.max(4, light - 5)}%)`);
+    g.fillStyle = grad;
     g.beginPath();
-    g.ellipse(0, 0, rand(3, 7), rand(1.5, 3.5), 0, 0, Math.PI * 2);
+    g.moveTo(-len / 2, 0);
+    g.quadraticCurveTo(0, -wid, len / 2, 0);
+    g.quadraticCurveTo(0, wid, -len / 2, 0);
     g.fill();
-    g.restore();
-  }
-  g.strokeStyle = '#3a2c1e';
-  g.lineWidth = 1.5;
-  for (let i = 0; i < 12; i++) {
+    g.strokeStyle = `hsla(${hue},30%,${light + 14}%,0.5)`;
+    g.lineWidth = 0.7;
     g.beginPath();
-    g.moveTo(128, 250);
-    g.quadraticCurveTo(128 + rand(-60, 60), 160, 128 + rand(-110, 110), rand(20, 140));
+    g.moveTo(-len / 2, 0);
+    g.lineTo(len / 2.4, 0);
     g.stroke();
+    g.restore();
   }
   return tex(c);
 }
 
-/** Fichtenzweig als Alpha-Karte. */
+/** Fichtenzweig als Alpha-Karte: Hauptast, Seitentriebe, dichte Nadeln, hellere Triebspitzen. */
 export function branchCardTexture(): THREE.CanvasTexture {
-  const [c, g] = canvas(256, 128);
-  g.clearRect(0, 0, 256, 128);
-  g.strokeStyle = '#3b2b1d';
-  g.lineWidth = 3;
-  g.beginPath();
-  g.moveTo(0, 64);
-  g.quadraticCurveTo(128, 70, 250, 60);
-  g.stroke();
-  for (let i = 0; i < 1400; i++) {
-    const t = Math.random();
-    const x = t * 248;
-    const spread = 54 * Math.sin(Math.PI * Math.min(1, t * 1.15)) * (1 - t * 0.35);
-    const y = 64 + rand(-1, 1) * spread;
-    const len = rand(4, 9);
-    const ang = (y < 64 ? -1 : 1) * rand(0.4, 1.1);
-    g.strokeStyle = `hsl(${rand(95, 135)},${rand(25, 45)}%,${rand(10, 24)}%)`;
-    g.lineWidth = 1.3;
+  const [c, g] = canvas(512, 256);
+  g.clearRect(0, 0, 512, 256);
+  g.lineCap = 'round';
+  const needle = (x: number, y: number, ang: number, len: number, light: number) => {
+    g.strokeStyle = `hsl(${rand(100, 140)},${rand(28, 48)}%,${light}%)`;
     g.beginPath();
     g.moveTo(x, y);
     g.lineTo(x + Math.cos(ang) * len, y + Math.sin(ang) * len);
     g.stroke();
+  };
+  // Zweig: Hauptachse von links (Stamm) nach rechts, Seitentriebe schraeg nach vorne
+  const twigs: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  for (let i = 0; i < 26; i++) {
+    const t = 0.06 + (i / 26) * 0.9;
+    const x0 = t * 490, y0 = 128 + Math.sin(t * 3) * 4;
+    const side = i % 2 ? 1 : -1;
+    const reach = 92 * Math.sin(Math.PI * Math.min(1, t * 1.1)) * (1 - t * 0.3) * rand(0.75, 1.05);
+    twigs.push({ x0, y0, x1: x0 + reach * 0.75, y1: y0 + side * reach });
+  }
+  twigs.push({ x0: 0, y0: 128, x1: 505, y1: 126 });
+  g.strokeStyle = '#2e2216';
+  for (const tw of twigs) {
+    g.lineWidth = tw.x0 === 0 ? 4 : 1.8;
+    g.beginPath();
+    g.moveTo(tw.x0, tw.y0);
+    g.lineTo(tw.x1, tw.y1);
+    g.stroke();
+  }
+  // Nadeln entlang aller Triebe: innen dunkel, aussen heller
+  g.lineWidth = 1.6;
+  for (let pass = 0; pass < 2; pass++) {
+    for (const tw of twigs) {
+      const dx = tw.x1 - tw.x0, dy = tw.y1 - tw.y0;
+      const len = Math.hypot(dx, dy);
+      const ang = Math.atan2(dy, dx);
+      const n = Math.round(len * 1.6);
+      for (let k = 0; k < n; k++) {
+        const t = k / n;
+        const x = tw.x0 + dx * t, y = tw.y0 + dy * t;
+        const side = Math.random() < 0.5 ? -1 : 1;
+        const a = ang + side * rand(0.5, 1.2);
+        const tipness = tw.x0 === 0 ? 0.2 : t;
+        const light = pass === 0 ? rand(8, 16) : rand(14, 24) + tipness * rand(6, 16);
+        needle(x, y, a, rand(7, 13) * (pass === 0 ? 1.15 : 0.9), light);
+      }
+    }
   }
   return tex(c);
 }
 
 export function grassCardTexture(): THREE.CanvasTexture {
-  const [c, g] = canvas(128, 128);
-  g.clearRect(0, 0, 128, 128);
-  for (let i = 0; i < 70; i++) {
-    const x = rand(8, 120), h = rand(55, 125), bend = rand(-18, 18);
-    const grad = g.createLinearGradient(0, 128, 0, 128 - h);
-    const hue = rand(55, 85);
-    grad.addColorStop(0, `hsl(${hue},40%,18%)`);
-    grad.addColorStop(1, `hsl(${hue - rand(0, 20)},${rand(30, 50)}%,${rand(38, 55)}%)`);
+  // Helligkeit und Form; die Farbe kommt im Shader vom Boden
+  const [c, g] = canvas(256, 256);
+  g.clearRect(0, 0, 256, 256);
+  for (let i = 0; i < 150; i++) {
+    const x = rand(10, 246), h = rand(90, 250) * (Math.random() < 0.2 ? 0.6 : 1), bend = rand(-30, 30);
+    const w = rand(1.6, 3.2);
+    const grad = g.createLinearGradient(0, 256, 0, 256 - h);
+    const v = rand(150, 215);
+    grad.addColorStop(0, `rgb(${v * 0.55},${v * 0.6},${v * 0.45})`);
+    grad.addColorStop(1, `rgb(${v * rand(0.95, 1.1)},${v},${v * rand(0.7, 0.85)})`);
     g.fillStyle = grad;
     g.beginPath();
-    g.moveTo(x - 1.6, 128);
-    g.quadraticCurveTo(x + bend * 0.5, 128 - h * 0.5, x + bend, 128 - h);
-    g.quadraticCurveTo(x + bend * 0.5 + 1.2, 128 - h * 0.5, x + 1.6, 128);
+    g.moveTo(x - w, 256);
+    g.quadraticCurveTo(x + bend * 0.4, 256 - h * 0.55, x + bend, 256 - h);
+    g.quadraticCurveTo(x + bend * 0.4 + w * 0.6, 256 - h * 0.55, x + w, 256);
     g.fill();
   }
   return tex(c);
@@ -170,19 +215,6 @@ export function logEndTexture(): THREE.CanvasTexture {
   g.arc(64, 64, 61, 0, Math.PI * 2);
   g.stroke();
   return tex(c);
-}
-
-export function rustTexture(): THREE.CanvasTexture {
-  const [c, g] = canvas(256, 256);
-  g.fillStyle = '#5a4a3c';
-  g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 900; i++) {
-    g.fillStyle = Math.random() < 0.6 ? `rgba(${rand(110, 160)},${rand(50, 75)},${rand(20, 35)},${rand(0.2, 0.6)})` : `rgba(70,80,72,${rand(0.2, 0.5)})`;
-    g.beginPath();
-    g.arc(rand(0, 256), rand(0, 256), rand(1, 10), 0, Math.PI * 2);
-    g.fill();
-  }
-  return tex(c, true);
 }
 
 export function rockTexture(): THREE.CanvasTexture {

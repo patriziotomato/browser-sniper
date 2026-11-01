@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Rng } from '../core/rng';
-import { bushCardTexture, logEndTexture, planksTexture, rockTexture, rustTexture, barkTexture } from './textures';
+import { alphaMipFix, customize, matte } from './atmosphere';
+import { bushCardTexture, logEndTexture, planksTexture, rockTexture, barkTexture } from './textures';
 
 export type CoverKind = 'busch' | 'fels' | 'huette' | 'holzstapel' | 'autowrack';
 
@@ -51,7 +52,11 @@ export function buildCover(kind: CoverKind, rng: Rng): CoverDef {
 
 function buildBush(g: THREE.Group, rng: Rng) {
   const map = bushCardTexture();
-  const mat = new THREE.MeshStandardMaterial({ map, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.9, color: 0xb8c49a });
+  const mat = new THREE.MeshStandardMaterial({ map, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.85, color: 0xc4ccaa });
+  customize(mat, 'cover-bush', (shader) => {
+    alphaMipFix(shader, 0.3);
+    matte(shader, 0.45);
+  });
   const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map, alphaTest: 0.4 });
   const parts: THREE.BufferGeometry[] = [];
   for (let i = 0; i < 110; i++) {
@@ -180,32 +185,143 @@ function buildWoodpile(g: THREE.Group, rng: Rng) {
 }
 
 function buildCar(g: THREE.Group) {
-  const rm = rustTexture();
-  rm.repeat.set(2, 1);
-  const rust = new THREE.MeshStandardMaterial({ map: rm, roughness: 0.8, metalness: 0.2, color: 0xe6d6c0 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x111214, roughness: 0.3, metalness: 0.2 });
-  const tire = new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.95 });
-  // Karosserie laengs zu X, Breitseite Richtung Gegner
-  const body = new THREE.Mesh(new RoundedBoxGeometry(4.3, 0.62, 1.8, 4, 0.12), rust);
-  body.position.set(0, 0.62, 0);
-  body.rotation.z = 0.04;
+  const wm = wreckTexture();
+  wm.repeat.set(0.25, 0.25);
+  const paint = new THREE.MeshStandardMaterial({ map: wm, roughness: 0.88, metalness: 0.15 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x0c0f10, roughness: 0.12, metalness: 0.1, side: THREE.DoubleSide });
+  const chrome = new THREE.MeshStandardMaterial({ color: 0x55534e, roughness: 0.55, metalness: 0.7 });
+  const tire = new THREE.MeshStandardMaterial({ color: 0x161616, roughness: 0.95 });
+  const under = new THREE.MeshStandardMaterial({ color: 0x1c1915, roughness: 1 });
+  // Seitenprofil einer alten Limousine (Laenge laengs X, Front bei -X), mit Radlaeufen
+  const B = 0.34, WR = 0.42;
+  const prof = new THREE.Shape();
+  prof.moveTo(-2.12, B);
+  prof.lineTo(-2.2, 0.56);
+  prof.quadraticCurveTo(-2.2, 0.84, -2.02, 0.87);
+  prof.lineTo(-0.98, 0.97);
+  prof.quadraticCurveTo(-0.62, 1.32, -0.32, 1.42);
+  prof.quadraticCurveTo(0.2, 1.47, 0.78, 1.43);
+  prof.quadraticCurveTo(1.12, 1.25, 1.36, 1.0);
+  prof.lineTo(2.08, 0.95);
+  prof.quadraticCurveTo(2.2, 0.9, 2.19, 0.58);
+  prof.lineTo(2.12, B);
+  prof.lineTo(1.35 + WR, B);
+  prof.absarc(1.35, B, WR, 0, Math.PI, false);
+  prof.lineTo(-1.35 + WR, B);
+  prof.absarc(-1.35, B, WR, 0, Math.PI, false);
+  prof.lineTo(-2.12, B);
+  const bodyGeo = new THREE.ExtrudeGeometry(prof, { depth: 1.66, bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.06, bevelSegments: 3, curveSegments: 10 });
+  bodyGeo.translate(0, 0, -0.83);
+  const body = new THREE.Mesh(bodyGeo, paint);
+  // Front (niedrige Motorhaube) zeigt zur Schussposition bei +X
+  body.scale.x = -1;
+  body.position.y = -0.04;
+  body.rotation.z = 0.035;
+  body.rotation.x = -0.02;
   g.add(body);
-  const cabin = new THREE.Mesh(new RoundedBoxGeometry(2.1, 0.55, 1.62, 4, 0.14), rust);
-  cabin.position.set(-0.45, 1.18, 0);
-  g.add(cabin);
-  // Scheiben (zerbrochen dunkel)
-  for (const z of [-0.82, 0.82]) {
-    const w = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.38), dark);
-    w.position.set(-0.45, 1.2, z);
-    if (z > 0) w.rotation.y = Math.PI;
-    g.add(w);
+  // Unterboden
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(4.1, 0.12, 1.6), under);
+  floor.position.set(0, B + 0.02, 0);
+  body.add(floor);
+  // Seitenscheiben (eine fehlt), Front- und Heckscheibe
+  const win = new THREE.Shape();
+  win.moveTo(-0.86, 1.02);
+  win.quadraticCurveTo(-0.58, 1.3, -0.33, 1.36);
+  win.quadraticCurveTo(0.2, 1.4, 0.74, 1.37);
+  win.quadraticCurveTo(1.02, 1.22, 1.2, 1.02);
+  win.lineTo(-0.86, 1.02);
+  const winGeo = new THREE.ShapeGeometry(win, 8);
+  for (const z of [-0.91, 0.91]) {
+    const w = new THREE.Mesh(winGeo, glass);
+    w.position.z = z;
+    body.add(w);
   }
-  // Reifen platt
-  for (const x of [-1.35, 1.35]) for (const z of [-0.82, 0.82]) {
-    const t = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.24, 16), tire);
-    t.rotation.x = Math.PI / 2;
-    t.scale.set(1, 1, 0.85);
-    t.position.set(x, 0.26, z);
+  const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.38, 1.86), paint);
+  pillar.position.set(0.22, 1.2, 0);
+  body.add(pillar);
+  const slanted = (x0: number, y0: number, x1: number, y1: number) => {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const pl = new THREE.Mesh(new THREE.PlaneGeometry(len * 0.92, 1.5), glass);
+    pl.rotation.order = 'ZYX';
+    pl.rotation.z = Math.atan2(y1 - y0, x1 - x0);
+    pl.rotation.x = -Math.PI / 2;
+    const nx = -(y1 - y0) / len, ny = (x1 - x0) / len;
+    pl.position.set((x0 + x1) / 2 + nx * 0.075, (y0 + y1) / 2 + ny * 0.075, 0);
+    body.add(pl);
+  };
+  slanted(-0.95, 0.99, -0.36, 1.4);
+  slanted(0.8, 1.42, 1.33, 1.02);
+  // Stossstangen, Scheinwerfer
+  for (const x of [-2.27, 2.25]) {
+    const bump = new THREE.Mesh(new RoundedBoxGeometry(0.12, 0.16, 1.82, 2, 0.04), chrome);
+    bump.position.set(x, 0.5, 0);
+    body.add(bump);
+  }
+  for (const z of [-0.6, 0.6]) {
+    const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.06, 14), chrome);
+    lamp.rotation.z = Math.PI / 2;
+    lamp.position.set(-2.22, 0.72, z);
+    body.add(lamp);
+  }
+  // Reifen platt, Felgen
+  for (const x of [-1.35, 1.35]) for (const z of [-0.74, 0.74]) {
+    const t = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.11, 8, 18), tire);
+    t.scale.set(1, 0.86, 1.1);
+    t.position.set(x, 0.29, z);
     g.add(t);
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.12, 14), chrome);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(x, 0.29, z);
+    g.add(rim);
   }
+}
+
+/** Verblasster Lack mit Rostflecken und Laufspuren. */
+function wreckTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 512;
+  const g = c.getContext('2d')!;
+  const r = (a: number, b: number) => a + Math.random() * (b - a);
+  g.fillStyle = '#56605a';
+  g.fillRect(0, 0, 512, 512);
+  for (let i = 0; i < 2500; i++) {
+    const v = r(-16, 16);
+    g.fillStyle = `rgba(${86 + v},${96 + v},${90 + v},0.25)`;
+    g.fillRect(r(0, 512), r(0, 512), r(2, 10), r(2, 10));
+  }
+  // Ausgebleichte Flaechen
+  for (let i = 0; i < 40; i++) {
+    const grd = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+    grd.addColorStop(0, 'rgba(170,175,160,0.35)');
+    grd.addColorStop(1, 'rgba(170,175,160,0)');
+    g.save();
+    g.translate(r(0, 512), r(0, 512));
+    g.scale(r(30, 90), r(20, 50));
+    g.fillStyle = grd;
+    g.fillRect(-1, -1, 2, 2);
+    g.restore();
+  }
+  // Rost: Flecken mit dunklem Kern, orange Rand
+  for (let i = 0; i < 130; i++) {
+    const x = r(0, 512), y = r(0, 512), rad = r(3, 18);
+    for (let k = 0; k < 18; k++) {
+      g.fillStyle = k < 6 ? `rgba(${r(115, 145)},${r(62, 80)},${r(32, 42)},0.3)` : `rgba(${r(62, 85)},${r(36, 46)},${r(22, 30)},0.45)`;
+      g.beginPath();
+      g.arc(x + r(-rad, rad) * 0.6, y + r(-rad, rad) * 0.6, rad * r(0.2, 0.6) * (k < 6 ? 1.3 : 0.8), 0, Math.PI * 2);
+      g.fill();
+    }
+    // Laufspur nach unten (Textur-v nach oben = Fahrzeug oben)
+    g.strokeStyle = `rgba(${r(90, 130)},${r(45, 60)},${r(25, 35)},0.25)`;
+    g.lineWidth = r(2, 6);
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + r(-3, 3), y + r(20, 70));
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  return t;
 }

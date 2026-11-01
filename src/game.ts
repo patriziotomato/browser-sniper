@@ -1,8 +1,10 @@
 import * as THREE from 'three';
-import { BloomEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect, ToneMappingMode, VignetteEffect } from 'postprocessing';
+import { BloomEffect, BrightnessContrastEffect, EffectComposer, EffectPass, HueSaturationEffect, RenderPass, SMAAEffect, ToneMappingEffect, ToneMappingMode, VignetteEffect } from 'postprocessing';
 import { DIFFICULTIES, Difficulty, DifficultyId, RIFLE, jevEnabled, settings } from './config';
 import { Rng, clamp } from './core/rng';
 import { Terrain } from './world/terrain';
+import { atmoUniforms } from './world/atmosphere';
+import { GroundLight } from './world/groundlight';
 import { SkySystem } from './world/sky';
 import { Vegetation, windUniforms } from './world/vegetation';
 import { buildCover, CoverDef, CoverKind } from './world/cover';
@@ -118,9 +120,11 @@ export class Game {
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(this.renderPass);
     const bloom = new BloomEffect({ intensity: 1.1, luminanceThreshold: 0.92, luminanceSmoothing: 0.05, mipmapBlur: true, radius: 0.7 });
-    const tone = new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC });
+    // Khronos PBR Neutral: haelt Farbton und Saettigung besser als ACES
+    const tone = new ToneMappingEffect({ mode: ToneMappingMode.NEUTRAL });
+    const grade = [new BrightnessContrastEffect({ contrast: 0.07 }), new HueSaturationEffect({ saturation: 0.06 })];
     const vignette = new VignetteEffect({ offset: 0.3, darkness: 0.45 });
-    this.effectPass = new EffectPass(this.camera, bloom, tone, new SMAAEffect(), vignette);
+    this.effectPass = new EffectPass(this.camera, bloom, tone, ...grade, new SMAAEffect(), vignette);
     this.composer.addPass(this.effectPass);
 
     window.addEventListener('resize', () => this.resize());
@@ -147,6 +151,10 @@ export class Game {
       else mat?.dispose();
     });
     this.scene.environment?.dispose();
+    if (atmoUniforms.atmoGround.value instanceof THREE.DataTexture && atmoUniforms.atmoGround.value.image.width > 1) {
+      atmoUniforms.atmoGround.value.dispose();
+    }
+    atmoUniforms.atmoGroundRect.value.set(0, 0, 0, 0);
     this.scene = new THREE.Scene();
     this.renderPass.mainScene = this.scene;
   }
@@ -291,8 +299,12 @@ export class Game {
       if (Math.hypot(x - px, z - pz) < (kind === 'huette' ? 2.6 : 2)) return true;
       return this.enemies.some((e) => Math.hypot(e.pos.x - x, e.pos.z - z) < 3.2);
     };
-    const veg = new Vegetation(this.terrain, rng, exclude, grassExclude, this.enemies.map((e) => e.pos), aimEye);
+    const ground = new GroundLight(this.terrain, this.sky.atmo.sunDir);
+    const veg = new Vegetation(this.terrain, rng, exclude, grassExclude, this.enemies.map((e) => e.pos), aimEye, ground);
     this.scene.add(veg.group);
+    atmoUniforms.atmoGround.value = ground.finish();
+    atmoUniforms.atmoGroundRect.value.copy(GroundLight.rect());
+    this.sky.setFogBase(aimEye.y);
 
     // Spieler
     this.player = new Player(this.camera, this.terrain, this.cover, center, rng.range(-1, 1));
