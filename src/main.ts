@@ -184,6 +184,7 @@ document.addEventListener('keydown', (e) => {
     case 'ShiftLeft': case 'ShiftRight': p.setBreath(true); break;
     case 'KeyR': p.zeroKeyHeld = true; break;
     case 'KeyQ': game.tag(); break;
+    case 'KeyK': game.hud.feedOn = !game.hud.feedOn; break;
   }
 });
 document.addEventListener('keyup', (e) => {
