@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ridgeline</title>
+  <style>
+    :root { --ink: #ece6d6; --muted: #a39d8c; --accent: #d9a441; --bg: #0d0f0e; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--ink); font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; user-select: none; }
+    #app, #app canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    #scope { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    #danger { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .15s; box-shadow: inset 0 0 180px 40px rgba(150, 10, 0, .55); }
+    body.hurt #danger { opacity: 1 !important; box-shadow: inset 0 0 220px 70px rgba(170, 0, 0, .7); transition: none; }
+    #scope-info .hp { color: #e0533f; letter-spacing: 2px; }
+    body.hit #danger { opacity: 1 !important; box-shadow: inset 0 0 300px 120px rgba(160, 0, 0, .85); }
+    #scope-info { position: fixed; left: 50%; bottom: 3.2vh; transform: translateX(-50%); display: flex; gap: 22px; font: 13px ui-monospace, 'SF Mono', Menlo, monospace; color: #cfc8b0; opacity: 0; transition: opacity .2s; letter-spacing: .02em; }
+    #scope-info b { color: #fff; font-weight: 600; }
+    #scope-info .ammo { color: var(--accent); letter-spacing: 3px; }
+    #breath { position: fixed; left: 50%; bottom: 7vh; width: 160px; height: 3px; transform: translateX(-50%); background: rgba(255,255,255,.12); opacity: 0; transition: opacity .2s; }
+    #breath-fill { height: 100%; width: 100%; }
+    #hint { position: fixed; left: 0; right: 0; bottom: 20px; text-align: center; font-size: 13px; color: rgba(236,230,214,.75); text-shadow: 0 1px 3px #000; pointer-events: none; }
+    #toast { position: fixed; top: 22px; left: 50%; transform: translateX(-50%); padding: 8px 16px; background: rgba(10,10,8,.6); border: 1px solid rgba(255,255,255,.12); border-radius: 6px; font-size: 14px; opacity: 0; transition: opacity .4s; pointer-events: none; white-space: nowrap; }
+    #brief { position: fixed; left: 22px; bottom: 56px; max-width: 460px; padding: 12px 16px; background: rgba(10,10,8,.62); border-left: 3px solid var(--accent); border-radius: 4px; font-size: 13.5px; line-height: 1.55; opacity: 0; transition: opacity .5s; pointer-events: none; }
+    #brief b { color: var(--accent); font-weight: 600; }
+    #wind { position: fixed; top: 20px; right: 22px; display: none; gap: 8px; align-items: center; font: 13px ui-monospace, monospace; background: rgba(10,10,8,.5); padding: 6px 10px; border-radius: 6px; }
+    #wind span { display: inline-block; font-size: 18px; }
+    #debug { position: fixed; top: 10px; left: 10px; max-width: 620px; display: none; font: 11.5px ui-monospace, monospace; background: rgba(0,0,0,.72); padding: 10px 12px; border-radius: 6px; line-height: 1.45; pointer-events: none; }
+    #debug div { margin-bottom: 5px; }
+    #debug .dh { color: var(--accent); }
+    #debug .dead { opacity: .45; }
+    #debug .err { color: #ff8a7a; }
+    #debug small { color: var(--muted); }
+    .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(13,15,14,.72), rgba(0,0,0,.92)); z-index: 10; }
+    .screen.hidden { display: none; }
+    .panel { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; }
+    h1 { font-size: 54px; letter-spacing: .32em; margin: 0 0 4px; font-weight: 700; }
+    .sub { color: var(--muted); margin: 0 0 28px; font-size: 15px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+    button { font: inherit; color: var(--ink); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18); padding: 10px 16px; border-radius: 6px; cursor: pointer; }
+    button:hover { background: rgba(255,255,255,.12); }
+    button.sel { border-color: var(--accent); color: #fff; background: rgba(217,164,65,.16); }
+    button.primary { background: var(--accent); color: #17140c; border-color: var(--accent); font-weight: 650; padding: 12px 26px; }
+    .label { font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin-bottom: 8px; }
+    .keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; font-size: 13px; color: #cfc8b0; margin-top: 26px; }
+    .keys kbd { font: 12px ui-monospace, monospace; color: var(--ink); }
+    .sliders { display: flex; gap: 24px; margin: -4px 0 22px; flex-wrap: wrap; }
+    .sliders label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+    .sliders input { width: 200px; accent-color: var(--accent); }
+    .status { font-size: 12.5px; color: var(--muted); margin-top: 18px; }
+    .status b { color: var(--ink); }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0 28px; }
+    .stats div { background: rgba(255,255,255,.05); border-radius: 6px; padding: 10px 12px; }
+    .stats b { display: block; font-size: 22px; }
+    .stats span { font-size: 12px; color: var(--muted); }
+    #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #000; z-index: 20; font-size: 14px; color: var(--muted); letter-spacing: .1em; }
+    #loading.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <canvas id="scope"></canvas>
+  <div id="danger"></div>
+  <div id="scope-info"></div>
+  <div id="breath"><div id="breath-fill"></div></div>
+  <div id="hint"></div>
+  <div id="toast"></div>
+  <div id="brief"></div>
+  <div id="wind"></div>
+  <div id="debug"></div>
+
+  <div id="menu" class="screen">
+    <div class="panel">
+      <h1>RIDGELINE</h1>
+      <p class="sub">Ein Schuss. Ein Treffer. Wer zuerst blinzelt, verliert.</p>
+      <div class="label">Schwierigkeit</div>
+      <div class="row" id="diffs"></div>
+      <div class="label">Grafik</div>
+      <div class="row" id="quals"></div>
+      <div class="sliders">
+        <label>Maus-Empfindlichkeit<input type="range" id="sens" min="0.3" max="2.5" step="0.05"></label>
+        <label>Lautstaerke<input type="range" id="vol" min="0" max="1" step="0.05"></label>
+      </div>
+      <button class="primary" id="start">Runde starten</button>
+      <div class="keys">
+        <kbd>Maus</kbd><span>Umsehen und zielen</span>
+        <kbd>Rechte Maustaste</kbd><span>Anlegen, halten fuer Zielfernrohr</span>
+        <kbd>Linke Maustaste</kbd><span>Schiessen</span>
+        <kbd>Leertaste / S</kbd><span>Abducken (laedt geduckt automatisch nach)</span>
+        <kbd>W</kbd><span>Aufrichten ohne Zielfernrohr</span>
+        <kbd>Shift</kbd><span>Luft anhalten (max. ~6 s)</span>
+        <kbd>Mausrad</kbd><span>Zoom 4–16×</span>
+        <kbd>R + Mausrad</kbd><span>Fleckschussdistanz (Zeroing) in 50-m-Schritten</span>
+        <kbd>Q / mittlere Maustaste</kbd><span>Gegner im Fadenkreuz markieren (Normal, Schwer)</span>
+        <kbd>Tab (halten)</kbd><span>Funk-Einweisung erneut anzeigen</span>
+        <kbd>I</kbd><span>Debug-Overlay mit Gegner-Markierungen, KI und Jev</span>
+        <kbd>Esc</kbd><span>Pause</span>
+      </div>
+      <div class="status" id="jev-status"></div>
+      <div class="status" id="stats-line"></div>
+    </div>
+  </div>
+
+  <div id="end" class="screen hidden">
+    <div class="panel">
+      <h1 id="end-title" style="font-size:40px;letter-spacing:.2em"></h1>
+      <p class="sub" id="end-reason"></p>
+      <div class="stats" id="end-stats"></div>
+      <div class="row">
+        <button class="primary" id="again">Neue Runde</button>
+        <button id="to-menu">Menue</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pause" class="screen hidden">
+    <div class="panel" style="text-align:center">
+      <h1 style="font-size:32px">PAUSE</h1>
+      <p class="sub">Klicke, um weiterzuspielen.</p>
+      <div class="row" style="justify-content:center">
+        <button class="primary" id="resume">Weiter</button>
+        <button id="quit">Runde abbrechen</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="loading" class="hidden">BERG WIRD ERZEUGT …</div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

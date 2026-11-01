@@ -1,0 +1,8 @@
+node_modules
+dist
+.env.local
+.env.*.local
+.DS_Store
+
+# Vite
+vite.config.ts.timestamp-*
