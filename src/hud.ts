@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { Player } from './player';
-import { Enemy, INTENTS, INTENT_LABEL } from './enemies/enemy';
+import { Enemy, INTENTS, INTENT_LABEL, INTENT_VERB } from './enemies/enemy';
 import { DirectorStatus } from './ai/director';
-import { RIFLE } from './config';
+import { RIFLE, moveKeys, moveKeysText, settings } from './config';
 import { Mortar } from './mortar';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -24,6 +24,7 @@ export class Hud {
   private mortarEl = $('mortar');
   private mortarText = '';
   debugOn = false;
+  feedOn = true;
   threats: { pos: THREE.Vector3; enemy: Enemy; until: number }[] = [];
   hp = 1;
   maxHp = 1;
@@ -78,6 +79,11 @@ export class Hud {
       }
       const label = debug ? `${e.info.label} ${Math.round(e.pos.distanceTo(from))} m` : showDist ? `${Math.round(e.pos.distanceTo(from))} m` : '';
       if (label) c.fillText(label, x, y - s - 5 * dpr);
+      if (!e.dead && (e.tagged || debug)) {
+        const src = e.intentSource === 'jev' ? 'Jev' : 'lokal';
+        c.fillStyle = e.intentSource === 'jev' ? 'rgba(130,210,255,0.95)' : 'rgba(220,220,220,0.85)';
+        c.fillText(`${INTENT_VERB[e.intent]} · ${src}`, x, y + s + 13 * dpr);
+      }
     }
   }
 
@@ -138,6 +144,8 @@ export class Hud {
       const behind = v.z > 1;
       const margin = 70 * dpr;
       const off = behind || x < margin || x > W - margin || y < margin || y > H - margin;
+      // Auf dem Handy uebernehmen die Stellungs-Tasten den Hinweis am Rand
+      if (off && settings.touch) continue;
       if (off) {
         // Am Rand der Seite, auf der die Stellung liegt
         x = m.dir < 0 ? margin : W - margin;
@@ -159,7 +167,7 @@ export class Hud {
         c.stroke();
       }
       c.textAlign = 'center';
-      const key = m.dir < 0 ? 'A' : 'D';
+      const key = moveKeys()[m.dir < 0 ? 0 : 1];
       c.fillText(`[${key}] ${m.label}`, x, y + (off ? 22 : -18) * dpr);
     }
     c.textBaseline = 'alphabetic';
@@ -178,10 +186,10 @@ export class Hud {
       if (time < mission.firstImpact) {
         const sec = Math.max(0, Math.ceil(mission.firstImpact - time));
         text = close
-          ? `<b>MOERSERFEUER IN ${sec} s</b><span>A / D: Stellung wechseln${mission.bySpotter ? ' · oder den Spotter ausschalten' : ''}</span>`
+          ? `<b>MOERSERFEUER IN ${sec} s</b><span>${moveKeysText()}: Stellung wechseln${mission.bySpotter ? ' · oder den Spotter ausschalten' : ''}</span>`
           : `<b>MOERSERFEUER IN ${sec} s</b><span>Ziel ist deine alte Stellung</span>`;
       } else {
-        text = close ? '<b>MOERSERFEUER — RAUS DA!</b><span>A / D: Stellung wechseln</span>' : '<b>BESCHUSS AUF ALTE STELLUNG</b><span>Nutze die Zeit</span>';
+        text = close ? `<b>MOERSERFEUER — RAUS DA!</b><span>${moveKeysText()}: Stellung wechseln</span>` : '<b>BESCHUSS AUF ALTE STELLUNG</b><span>Nutze die Zeit</span>';
       }
     }
     if (text !== this.mortarText) {
@@ -189,6 +197,37 @@ export class Hud {
       this.mortarEl.innerHTML = text;
       this.mortarEl.style.opacity = text ? '1' : '0';
     }
+  }
+
+  private feedEl = $('feed');
+  private feed: { html: string; t: number }[] = [];
+  private seen = new Map<number, number>();
+
+  /** Entscheidungs-Feed: jede neue Gegner-Absicht mit Quelle und Wahrscheinlichkeit. */
+  updateFeed(enemies: Enemy[], show: boolean) {
+    const now = performance.now();
+    for (const e of enemies) {
+      const last = this.seen.get(e.id) ?? 0;
+      if (e.decision.seq !== last) {
+        this.seen.set(e.id, e.decision.seq);
+        if (last === 0 && e.decision.intent === 'beobachten') continue;
+        const d = e.decision;
+        const badge = d.source === 'jev' ? '<span class="src jev">JEV</span>' : '<span class="src lokal">LOKAL</span>';
+        this.feed.unshift({ html: `${badge} <b>${e.info.label}</b> ${INTENT_VERB[d.intent]} <small>${Math.round(d.p * 100)} %</small>`, t: now });
+      }
+    }
+    this.feed = this.feed.filter((f) => now - f.t < 9000).slice(0, 5);
+    if (!show || !this.feed.length) {
+      this.feedEl.style.opacity = '0';
+      return;
+    }
+    this.feedEl.style.opacity = '1';
+    this.feedEl.innerHTML = this.feed.map((f) => `<div style="opacity:${Math.max(0.25, 1 - (now - f.t) / 9000)}">${f.html}</div>`).join('');
+  }
+
+  resetFeed() {
+    this.feed = [];
+    this.seen.clear();
   }
 
   setHint(text: string) {
@@ -308,15 +347,37 @@ export class Hud {
     this.debug.style.display = 'block';
     const rows = enemies
       .map((e) => {
-        const probs = INTENTS.map((i) => `${INTENT_LABEL[i].split(' ')[0]} ${(e.probs[i] * 100).toFixed(0)}%`).join(' · ');
-        return `<div class="${e.dead ? 'dead' : ''}"><b>#${e.id + 1} ${e.info.label}</b> ${e.dead ? '† tot' : `${e.intent} <i>(${e.intentSource})</i> · Phase ${e.phase} · Wahrn. ${(e.awareness * 100).toFixed(0)}% · Nerv. ${(e.nerves * 100).toFixed(0)}% · ${e.knowsPlayer ? 'kennt Position' : '—'}`}<br><small>${probs}</small></div>`;
+        const probs = INTENTS.map((i) => {
+          const pct = Math.round(e.probs[i] * 100);
+          return `<span class="bar${i === e.intent ? ' cur' : ''}"><i style="width:${pct}%"></i><em>${INTENT_VERB[i]} ${pct}%</em></span>`;
+        }).join('');
+        return `<div class="${e.dead ? 'dead' : ''}"><b>#${e.id + 1} ${e.info.label}</b> ${e.dead ? '† tot' : `<span class="src ${e.intentSource}">${e.intentSource === 'jev' ? 'JEV' : 'LOKAL'}</span> ${INTENT_VERB[e.intent]} · Phase ${e.phase} · Wahrn. ${Math.min(100, e.awareness * 100).toFixed(0)}% · Nerv. ${(e.nerves * 100).toFixed(0)}% · ${e.knowsPlayer ? 'kennt Position' : '—'}`}<div class="bars">${probs}</div></div>`;
       })
       .join('');
     this.debug.innerHTML =
-      `<div class="dh">Jev-Direktor: <b>${status.mode.toUpperCase()}</b> · Aufrufe ${status.calls} · Fallbacks ${status.fallbacks} · Latenz ${status.lastLatency} ms${status.lastError ? ` · <span class="err">${status.lastError}</span>` : ''}</div>${rows}<div class="dh">${extra}</div>`;
+      `${jevLine(status)}${rows}<div class="dh">${extra}</div>`;
   }
 }
 
 function clampN(v: number, a: number, b: number) {
   return Math.max(a, Math.min(b, v));
+}
+
+/** Kopfzeile des Debug-Panels: ist Jev verfuegbar, und wenn nicht, warum? */
+function jevLine(st: DirectorStatus): string {
+  const stats = `Aufrufe ${st.calls} · Fallbacks ${st.fallbacks}`;
+  switch (st.mode) {
+    case 'jev':
+      return `<div class="jev ok">Jev aktiv · Latenz ${st.lastLatency} ms · ${stats}</div>`;
+    case 'aus':
+      return `<div class="jev off">Jev nicht verfuegbar: in diesem Build gibt es keinen Jev-Proxy bzw. keinen API-Key (z. B. GitHub Pages). Die lokale KI steuert die Gegner.</div>`;
+    case 'pausiert':
+      return `<div class="jev off">Jev nicht erreichbar, nach 6 Fehlern in Folge ausgesetzt · neuer Versuch in ${st.pausedFor} s · lokale KI steuert<br><small>Letzter Fehler: ${escapeHtml(st.lastError)} · ${stats}</small></div>`;
+    case 'fehler':
+      return `<div class="jev off">Jev nicht erreichbar · lokale KI uebernimmt<br><small>Fehler: ${escapeHtml(st.lastError)} · ${stats}</small></div>`;
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }

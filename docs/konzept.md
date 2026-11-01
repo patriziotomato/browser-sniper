@@ -183,6 +183,7 @@ Nach den ersten Testrunden angepasst:
 - **Debug-Overlay** auf Taste I (F3 ist auf dem Mac belegt), mit Gegner-Markierungen.
 - **Menü:** Grafikstufe, Maus-Empfindlichkeit, Lautstärke, Statistik.
 - **Assets:** Texturen, Modelle und Sounds sind prozedural erzeugt statt aus Poly Haven, Mixamo und Freesound.
+- **Handy-Variante:** Touch-Steuerung im Querformat (Wischen zum Zielen, Pinch-Zoom, Tasten für Feuer, Anlegen, Ducken, Atem, Fleckschuss, Markieren, Funk). Wird auf Touch-Geräten automatisch aktiv, Grafik startet auf „Niedrig“; hochkant pausiert das Spiel.
 - **Moerserbeschuss und Stellungswechsel:** Auf dem Grat stehen neben deiner Deckung bis zu zwei Ausweichstellungen
   (25–60 m links und rechts, andere Deckungsart). Jeder eigene Schuss und jede Sekunde, in der dich ein Gegner ungedeckt
   sieht, fuellt die Anzeige „Stellung verraten“. Bei 100 % fordert der Gegner Moerserfeuer an: Countdown

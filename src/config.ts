@@ -109,6 +109,18 @@ export const QUALITIES: Record<QualityId, Quality> = {
   test: { id: 'test', label: 'Test', pixelRatio: 1, shadows: false, shadowMap: 512, terrainStep: 8, vegetation: 0.08, grass: 0.03 },
 };
 
+/** Touch-Steuerung: ?touch=1/0 in der URL, sonst gespeicherte Wahl, sonst Geraet mit Finger als Hauptzeiger. */
+function initialTouch(): boolean {
+  try {
+    const t = new URLSearchParams(location.search).get('touch');
+    if (t === '1' || t === '0') return t === '1';
+    const s = localStorage.getItem('ridgeline.controls');
+    if (s === 'touch' || s === 'maus') return s === 'touch';
+  } catch { /* egal */ }
+  return typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+}
+const startTouch = initialTouch();
+
 function initialQuality(): QualityId {
   try {
     const q = new URLSearchParams(location.search).get('q');
@@ -116,7 +128,8 @@ function initialQuality(): QualityId {
     const s = localStorage.getItem('ridgeline.quality');
     if (s && s in QUALITIES) return s as QualityId;
   } catch { /* egal */ }
-  return 'hoch';
+  // Handys schaffen die hohe Stufe selten fluessig
+  return startTouch ? 'niedrig' : 'hoch';
 }
 function stored(key: string, def: number): number {
   try {
@@ -130,7 +143,14 @@ export const settings = {
   quality: QUALITIES[initialQuality()],
   sensitivity: stored('ridgeline.sens', 1),
   volume: stored('ridgeline.volume', 0.8),
+  touch: startTouch,
+  touchSensitivity: stored('ridgeline.touchSens', 1),
 };
+
+/** Tasten fuer den Stellungswechsel (links, rechts), wie sie im HUD stehen. */
+export const moveKeys = (): [string, string] => (settings.touch ? ['◀', '▶'] : ['A', 'D']);
+/** Kurzform fuer Hinweise, z. B. "A / D". */
+export const moveKeysText = () => moveKeys().join(' / ');
 
 export interface Stats { played: number; won: number; kills: number; longest: number }
 export function loadStats(): Stats {

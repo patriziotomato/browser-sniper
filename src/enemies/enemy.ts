@@ -14,6 +14,15 @@ export const INTENT_LABEL: Record<Intent, string> = {
   deckung: 'in Deckung bleiben',
 };
 
+/** Kurzform fuer Anzeigen ("Wachposten legt an"). */
+export const INTENT_VERB: Record<Intent, string> = {
+  beobachten: 'beobachtet',
+  zielen: 'legt an',
+  stellung_wechseln: 'wechselt Position',
+  alarmieren: 'alarmiert',
+  deckung: 'geht in Deckung',
+};
+
 export const TYPE_INFO: Record<EnemyType, { label: string; persona: string; detect: number; accuracy: number; cone: number; shoots: boolean }> = {
   wache: { label: 'Wachposten', persona: 'gelangweilter Wachposten, reagiert langsam', detect: 0.11, accuracy: 0.55, cone: 1.2, shoots: true },
   patrouille: { label: 'Patrouille', persona: 'aufmerksamer Soldat auf Streife', detect: 0.1, accuracy: 0.6, cone: 1.1, shoots: true },
@@ -62,6 +71,8 @@ export class Enemy {
   nerves = 0.2;
   intent: Intent = 'beobachten';
   intentSource: 'jev' | 'lokal' = 'lokal';
+  /** Letzte Entscheidung des Direktors (fuer Feed und Marker). */
+  decision: { seq: number; intent: Intent; source: 'jev' | 'lokal'; p: number } = { seq: 0, intent: 'beobachten', source: 'lokal', p: 1 };
   probs: Record<Intent, number> = { beobachten: 1, zielen: 0, stellung_wechseln: 0, alarmieren: 0, deckung: 0 };
   detectP = 0;
   phase: AimPhase = 'none';
@@ -129,7 +140,7 @@ export class Enemy {
     this.nerves = Math.min(1, this.nerves + 0.1);
   }
 
-  setIntent(intent: Intent, source: 'jev' | 'lokal') {
+  setIntent(intent: Intent, source: 'jev' | 'lokal', p = 1) {
     if (this.dead) return;
     // Laufenden Schuss nicht durch Beobachten abbrechen
     if (this.phase === 'window' && intent !== 'deckung') return;
@@ -139,6 +150,7 @@ export class Enemy {
     }
     this.intent = intent;
     this.intentSource = source;
+    this.decision = { seq: this.decision.seq + 1, intent, source, p };
     if (intent !== 'zielen' && this.phase !== 'bolt') this.phase = 'none';
     if (intent === 'stellung_wechseln') this.pickNewPosition();
     if (intent === 'deckung') this.coverT = this.rng.range(2.5, 5);

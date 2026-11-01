@@ -1,8 +1,10 @@
 import * as THREE from 'three';
-import { BloomEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect, ToneMappingMode, VignetteEffect } from 'postprocessing';
-import { DIFFICULTIES, Difficulty, DifficultyId, RIFLE, jevEnabled, settings } from './config';
+import { BloomEffect, BrightnessContrastEffect, EffectComposer, EffectPass, HueSaturationEffect, RenderPass, SMAAEffect, ToneMappingEffect, ToneMappingMode, VignetteEffect } from 'postprocessing';
+import { DIFFICULTIES, Difficulty, DifficultyId, RIFLE, jevEnabled, settings, moveKeys, moveKeysText } from './config';
 import { Rng, clamp } from './core/rng';
 import { Terrain } from './world/terrain';
+import { atmoUniforms } from './world/atmosphere';
+import { GroundLight } from './world/groundlight';
 import { SkySystem } from './world/sky';
 import { Vegetation, windUniforms } from './world/vegetation';
 import { buildCover, CoverDef, CoverKind } from './world/cover';
@@ -85,6 +87,13 @@ export class Game {
   enemies: Enemy[] = [];
   private director!: Director;
   private diff: Difficulty = DIFFICULTIES.normal;
+  get difficulty(): Difficulty {
+    return this.diff;
+  }
+  /** Laeuft gerade die Kugel-Kamera (Zeitlupe)? */
+  get cinematic(): boolean {
+    return !!this.bulletCam;
+  }
   private props: PropBox[] = [];
   private flags: Flag[] = [];
   private fires: THREE.Vector3[] = [];
@@ -123,9 +132,11 @@ export class Game {
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(this.renderPass);
     const bloom = new BloomEffect({ intensity: 1.1, luminanceThreshold: 0.92, luminanceSmoothing: 0.05, mipmapBlur: true, radius: 0.7 });
-    const tone = new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC });
+    // Khronos PBR Neutral: haelt Farbton und Saettigung besser als ACES
+    const tone = new ToneMappingEffect({ mode: ToneMappingMode.NEUTRAL });
+    const grade = [new BrightnessContrastEffect({ contrast: 0.07 }), new HueSaturationEffect({ saturation: 0.06 })];
     const vignette = new VignetteEffect({ offset: 0.3, darkness: 0.45 });
-    this.effectPass = new EffectPass(this.camera, bloom, tone, new SMAAEffect(), vignette);
+    this.effectPass = new EffectPass(this.camera, bloom, tone, ...grade, new SMAAEffect(), vignette);
     this.composer.addPass(this.effectPass);
 
     window.addEventListener('resize', () => this.resize());
@@ -152,6 +163,10 @@ export class Game {
       else mat?.dispose();
     });
     this.scene.environment?.dispose();
+    if (atmoUniforms.atmoGround.value instanceof THREE.DataTexture && atmoUniforms.atmoGround.value.image.width > 1) {
+      atmoUniforms.atmoGround.value.dispose();
+    }
+    atmoUniforms.atmoGroundRect.value.set(0, 0, 0, 0);
     this.scene = new THREE.Scene();
     this.renderPass.mainScene = this.scene;
   }
@@ -182,6 +197,7 @@ export class Game {
     this.hits = this.kills = this.longest = 0;
     this.hp = this.diff.lives;
     this.hud.threats = [];
+    this.hud.resetFeed();
     this.lastShotTime = -99;
     this.endScheduled = false;
 
@@ -307,8 +323,12 @@ export class Game {
       if (coverPts.some((c) => Math.hypot(x - c.x, z - c.z) < (c.hut ? 2.6 : 2))) return true;
       return this.enemies.some((e) => Math.hypot(e.pos.x - x, e.pos.z - z) < 3.2);
     };
-    const veg = new Vegetation(this.terrain, rng, exclude, grassExclude, this.enemies.map((e) => e.pos), aimEye);
+    const ground = new GroundLight(this.terrain, this.sky.atmo.sunDir);
+    const veg = new Vegetation(this.terrain, rng, exclude, grassExclude, this.enemies.map((e) => e.pos), aimEye, ground);
     this.scene.add(veg.group);
+    atmoUniforms.atmoGround.value = ground.finish();
+    atmoUniforms.atmoGroundRect.value.copy(GroundLight.rect());
+    this.sky.setFogBase(aimEye.y);
 
     // Spieler
     this.player = new Player(this.camera, this.terrain, this.cover, center, rng.range(-1, 1));
@@ -336,7 +356,7 @@ export class Game {
       return `<b>${e.info.label}</b> · ${side} · ca. ${dist} m · ${note}`;
     });
     const alts = [this.positions[this.posIdx - 1], this.positions[this.posIdx + 1]]
-      .map((p, i) => (p ? `${i === 0 ? '<b>A</b> links' : '<b>D</b> rechts'}: ${p.cover.label}, ${Math.round(p.aimEye.distanceTo(eye))} m` : ''))
+      .map((p, i) => (p ? `<b>${moveKeys()[i]}</b> ${i === 0 ? 'links' : 'rechts'}: ${p.cover.label}, ${Math.round(p.aimEye.distanceTo(eye))} m` : ''))
       .filter(Boolean);
     const mortarLine = alts.length
       ? `<br>Achtung, Moerser: Wer zu oft aus derselben Stellung schiesst, wird eingemessen. Ausweichstellungen ${alts.join(' · ')}.`
@@ -753,7 +773,7 @@ export class Game {
         document.body.classList.add('hurt');
         setTimeout(() => document.body.classList.remove('hurt'), 900);
         if (p.state === 'up' || p.state === 'rising') p.duck();
-        this.hud.toast('Splitter getroffen! Raus aus der Stellung — A / D', 4);
+        this.hud.toast(`Splitter getroffen! Raus aus der Stellung — ${moveKeysText()}`, 4);
       } else {
         p.setState('dead');
         audio.muffle(true);
@@ -767,7 +787,7 @@ export class Game {
       audio.muffleFor(2, 500);
       audio.tinnitus(2, 0.035);
       if (p.state === 'up' || p.state === 'rising') p.duck();
-      if (Math.hypot(m.target.x - p.eye.x, m.target.z - p.eye.z) < 20) this.hud.toast('Die naechste sitzt — wechsel die Stellung! (A / D)', 3);
+      if (Math.hypot(m.target.x - p.eye.x, m.target.z - p.eye.z) < 20) this.hud.toast(`Die naechste sitzt — wechsel die Stellung! (${moveKeysText()})`, 3);
     } else if (d < 40) {
       p.pulse = Math.min(170, p.pulse + 12);
     }
@@ -949,7 +969,13 @@ export class Game {
     // HUD
     if (p.state === 'intro') this.hud.setHint('Lauf zur Deckung …');
     else if (p.moving) this.hud.setHint('Stellungswechsel …');
-    else if (p.state === 'ducked') this.hud.setHint(p.reloadT > 0 ? 'Nachladen …' : 'Rechte Maustaste: anlegen   ·   W: aufrichten ohne Zielfernrohr   ·   A / D: Stellung wechseln');
+    else if (p.state === 'ducked' && p.reloadT > 0) this.hud.setHint('Nachladen …');
+    else if (settings.touch) {
+      if (p.state === 'ducked') this.hud.setHint('Wischen: umsehen   ·   Zielfernrohr-Taste: anlegen   ·   ◀ ▶: Stellung wechseln');
+      else if (p.state === 'up' && !p.scoped) this.hud.setHint('Zielfernrohr-Taste: Scope   ·   Ducken-Taste: abtauchen');
+      else if (p.scoped) this.hud.setHint('Wischen: zielen   ·   Zwei Finger: Zoom   ·   Atem-Taste: Luft anhalten');
+      else this.hud.setHint('');
+    } else if (p.state === 'ducked') this.hud.setHint('Rechte Maustaste: anlegen   ·   W: aufrichten ohne Zielfernrohr   ·   A / D: Stellung wechseln');
     else if (p.state === 'up' && !p.scoped) this.hud.setHint('Rechte Maustaste halten: Zielfernrohr   ·   Leertaste: abducken');
     else if (p.scoped) this.hud.setHint(`Shift: Luft anhalten   ·   Mausrad: Zoom   ·   R + Mausrad: Fleckschuss${this.diff.tagging === 'manual' ? '   ·   Q: markieren' : ''}   ·   Leertaste: abducken`);
     else this.hud.setHint('');
@@ -961,10 +987,11 @@ export class Game {
     const windRel = THREE.MathUtils.radToDeg(Math.atan2(this.wind.dot(r), this.wind.dot(f)));
     this.hud.update(realDt, danger, this.wind.length(), windRel, this.diff.showWindHud);
     this.hud.drawMortar(this.mortar, this.time, p.eye, p.state === 'intro' || p.state === 'dead' || p.state === 'won' || !this.running);
+    this.hud.updateFeed(this.enemies, this.hud.feedOn && p.state !== 'intro');
     this.hud.drawDebug(
       this.enemies,
       this.director.status,
-      `Wind ${this.wind.length().toFixed(1)} m/s · Wetter ${this.sky.atmo.weather} · Deckung ${this.cover.label} · Verrat ${Math.round(this.mortar.heat * 100)}% · Seed ${this.seed} · Jev ${jevEnabled() ? 'konfiguriert' : 'nicht konfiguriert (.env.local)'} · I schliesst`,
+      `Wind ${this.wind.length().toFixed(1)} m/s · Wetter ${this.sky.atmo.weather} · Deckung ${this.cover.label} · Verrat ${Math.round(this.mortar.heat * 100)}% · Seed ${this.seed} · I schliesst · K: Feed ein/aus`,
     );
     this.render();
   }

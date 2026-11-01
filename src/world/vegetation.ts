@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Rng } from '../core/rng';
-import { Terrain } from './terrain';
+import { GLSL_NOISE, Terrain } from './terrain';
 import { settings } from '../config';
 const V = () => settings.quality.vegetation;
 const GR = () => settings.quality.grass;
+import { alphaMipFix, customize, matte } from './atmosphere';
+import { GroundLight } from './groundlight';
 import { barkTexture, branchCardTexture, bushCardTexture, grassCardTexture, rockTexture } from './textures';
 
 export const windUniforms = {
@@ -12,32 +14,40 @@ export const windUniforms = {
   uWind: { value: new THREE.Vector2(0, 0) },
 };
 
-/** Wind-Biegung in den Vertex-Shader einbauen. bendExpr liefert 0..1 (wie stark der Vertex mitgeht). */
-function addWind(mat: THREE.Material, bendExpr: string, strength: number) {
-  mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = windUniforms.uTime;
-    shader.uniforms.uWind = windUniforms.uWind;
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform vec2 uWind;')
-      .replace(
-        '#include <begin_vertex>',
-        /* glsl */ `#include <begin_vertex>
-        {
-          vec3 iPos = vec3(0.0);
-          #ifdef USE_INSTANCING
-            iPos = instanceMatrix[3].xyz;
-          #endif
-          float bend = ${bendExpr};
-          float w = length(uWind);
-          float gust = 0.6 + 0.4*sin(uTime*1.3 + iPos.x*0.05 + iPos.z*0.04);
-          float flutter = sin(uTime*(2.0+w*0.35) + iPos.x*0.7 + iPos.z*0.3 + position.y*2.0);
-          vec2 dir = w > 0.01 ? uWind / w : vec2(1.0, 0.0);
-          float amt = bend * ${strength.toFixed(3)} * (w*gust*0.08 + flutter*0.02*(0.3+w*0.1));
-          transformed.x += dir.x * amt;
-          transformed.z += dir.y * amt;
-        }`,
-      );
-  };
+/** Wind-Biegung als Vertex-Patch. bendExpr liefert 0..1 (wie stark der Vertex mitgeht). */
+function windPatch(shader: THREE.WebGLProgramParametersWithUniforms, bendExpr: string, strength: number) {
+  shader.uniforms.uTime = windUniforms.uTime;
+  shader.uniforms.uWind = windUniforms.uWind;
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform vec2 uWind;')
+    .replace(
+      '#include <begin_vertex>',
+      /* glsl */ `#include <begin_vertex>
+      {
+        vec3 iPos = vec3(0.0);
+        #ifdef USE_INSTANCING
+          iPos = instanceMatrix[3].xyz;
+        #endif
+        float bend = ${bendExpr};
+        float w = length(uWind);
+        float gust = 0.6 + 0.4*sin(uTime*1.3 + iPos.x*0.05 + iPos.z*0.04);
+        float flutter = sin(uTime*(2.0+w*0.35) + iPos.x*0.7 + iPos.z*0.3 + position.y*2.0);
+        vec2 dir = w > 0.01 ? uWind / w : vec2(1.0, 0.0);
+        float amt = bend * ${strength.toFixed(3)} * (w*gust*0.08 + flutter*0.02*(0.3+w*0.1));
+        transformed.x += dir.x * amt;
+        transformed.z += dir.y * amt;
+      }`,
+    );
+}
+
+/** Vegetationsmaterial: Wind, Alpha-Fix fuer Distanz, wenig Glanz. */
+function foliage(mat: THREE.MeshStandardMaterial, key: string, bendExpr: string, strength: number, extra?: (s: THREE.WebGLProgramParametersWithUniforms) => void) {
+  customize(mat, key, (shader) => {
+    windPatch(shader, bendExpr, strength);
+    alphaMipFix(shader, 0.32);
+    matte(shader, 0.35);
+    extra?.(shader);
+  });
 }
 
 /** Normalen radial nach aussen (wirkt bei Karten-Vegetation wie ein Volumen). centerY < 0 = Achse (Baum). */
@@ -53,24 +63,25 @@ function outwardNormals(geo: THREE.BufferGeometry, centerY: number, upBias: numb
   }
 }
 
-function buildConifer(rng: Rng, height: number): { trunk: THREE.BufferGeometry; foliage: THREE.BufferGeometry } {
-  const trunk = new THREE.CylinderGeometry(0.07 * height / 10, 0.022 * height + 0.12, height, 7, 1, true);
+/** lod 1: weniger, groessere Zweigkarten fuer weit entfernte Baeume. */
+function buildConifer(rng: Rng, height: number, lod = 0): { trunk: THREE.BufferGeometry; foliage: THREE.BufferGeometry } {
+  const trunk = new THREE.CylinderGeometry(0.07 * height / 10, 0.022 * height + 0.12, height, lod ? 4 : 7, 1, true);
   trunk.translate(0, height / 2, 0);
   const cards: THREE.BufferGeometry[] = [];
   const crownStart = height * rng.range(0.12, 0.22);
-  const whorls = Math.round(height * 1.15);
+  const whorls = Math.round(height * (lod ? 0.5 : 1.15));
   for (let w = 0; w < whorls; w++) {
     const t = w / (whorls - 1);
     const y = crownStart + (height - crownStart) * t;
-    const len = (height * 0.32) * Math.pow(1 - t, 0.85) + 0.35;
-    const per = 4 + Math.round((1 - t) * 2);
+    const len = ((height * 0.32) * Math.pow(1 - t, 0.85) + 0.35) * (lod ? 1.12 : 1);
+    const per = (lod ? 3 : 4) + Math.round((1 - t) * 2);
     for (let b = 0; b < per; b++) {
       const ang = (b / per) * Math.PI * 2 + rng.range(-0.3, 0.3) + w * 0.7;
       const droop = rng.range(0.15, 0.45) + t * 0.1;
-      for (let k = 0; k < 2; k++) {
-        const g = new THREE.PlaneGeometry(len, len * 0.55);
+      for (let k = lod; k < 2; k++) {
+        const g = new THREE.PlaneGeometry(len, len * (lod ? 0.8 : 0.55));
         g.translate(len / 2, 0, 0);
-        g.rotateX(k === 0 ? Math.PI / 2 : rng.range(-0.25, 0.25));
+        g.rotateX(k === 0 ? Math.PI / 2 : rng.range(-0.25, 0.25) + (lod ? rng.pick([-0.5, 0.5]) : 0));
         g.rotateZ(-droop);
         g.rotateY(ang);
         g.translate(0, y, 0);
@@ -81,9 +92,23 @@ function buildConifer(rng: Rng, height: number): { trunk: THREE.BufferGeometry; 
   const top = new THREE.PlaneGeometry(0.9, 1.6);
   top.translate(0, height + 0.5, 0);
   cards.push(top, top.clone().rotateY(Math.PI / 2));
-  const foliage = mergeGeometries(cards)!;
-  outwardNormals(foliage, -1, 0.45);
-  return { trunk, foliage };
+  const fol = mergeGeometries(cards)!;
+  outwardNormals(fol, -1, 0.45);
+  // Eigenverschattung: innen und unten dunkler, Spitzen heller und frischer
+  const p = fol.attributes.position as THREE.BufferAttribute;
+  const col = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    const y = p.getY(i) / height;
+    const r = Math.hypot(p.getX(i), p.getZ(i));
+    const maxR = height * 0.32 * Math.pow(Math.max(0, 1 - (y * height - crownStart) / (height - crownStart)), 0.85) + 0.35;
+    const outer = Math.min(1, r / Math.max(0.3, maxR));
+    const ao = 0.38 + 0.42 * outer + 0.3 * Math.min(1, Math.max(0, y));
+    col[i * 3] = ao * (0.95 + 0.1 * outer);
+    col[i * 3 + 1] = ao * (1.0 + 0.08 * outer);
+    col[i * 3 + 2] = ao * 0.95;
+  }
+  fol.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return { trunk, foliage: fol };
 }
 
 export interface Exclusion {
@@ -93,7 +118,7 @@ export interface Exclusion {
 export class Vegetation {
   readonly group = new THREE.Group();
 
-  constructor(private terrain: Terrain, private rng: Rng, private exclude: Exclusion, private grassExclude: Exclusion, enemyAreas: THREE.Vector3[], player: THREE.Vector3) {
+  constructor(private terrain: Terrain, private rng: Rng, private exclude: Exclusion, private grassExclude: Exclusion, enemyAreas: THREE.Vector3[], private player: THREE.Vector3, private ground: GroundLight) {
     this.buildTrees();
     this.buildRocks();
     this.buildBushes();
@@ -118,34 +143,50 @@ export class Vegetation {
     const barkMap = barkTexture();
     barkMap.repeat.set(1, 3);
     const branchMap = branchCardTexture();
-    const barkMat = new THREE.MeshStandardMaterial({ map: barkMap, roughness: 1 });
-    const folMat = new THREE.MeshStandardMaterial({ map: branchMap, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.9 });
-    addWind(folMat, 'clamp(position.y/12.0,0.0,1.0)', 1.0);
-    const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: branchMap, alphaTest: 0.42 });
+    const barkMat = new THREE.MeshStandardMaterial({ map: barkMap, roughness: 1, color: 0x8a7a6a });
+    barkMat.defines = { ATMO_NO_TREE_SHADOW: '' };
+    const folMat = new THREE.MeshStandardMaterial({ map: branchMap, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.85, vertexColors: true });
+    folMat.defines = { ATMO_NO_TREE_SHADOW: '' };
+    foliage(folMat, 'tree-foliage', 'clamp(position.y/12.0,0.0,1.0)', 1.0, (shader) => {
+      // Licht scheint durch die Nadeln (Gegenlicht)
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <lights_fragment_end>',
+        `#include <lights_fragment_end>
+        {
+          // directionalLights[].direction liegt schon im View-Space und zeigt zur Sonne
+          float back = pow(clamp(dot(normalize(-vViewPosition), directionalLights[0].direction), 0.0, 1.0), 4.0);
+          reflectedLight.directDiffuse += directionalLights[0].color * diffuseColor.rgb * back * 0.6 * atmoSunVis;
+        }`,
+      );
+    });
+    const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: branchMap, alphaTest: 0.45 });
 
     // Waldflaechen ueber Rauschen: Baeume clustern, offene Wiesen dazwischen.
     const forestNoise = (x: number, z: number) =>
       Math.sin(x / 210 + this.terrain.params.lateralPhase) * Math.cos(z / 170) + Math.sin((x + z) / 90) * 0.4;
     const pos = this.scatter(
-      Math.round(4200 * V()),
-      { x: [-1700, 1700], z: [-2300, 800] },
-      (x, z, h, slope) => slope < 0.38 && h < 470 && forestNoise(x, z) > 0.15 - Math.random() * 0.35,
-      60000,
+      Math.round(7000 * V()),
+      { x: [-1700, 1700], z: [-2300, 450] },
+      // dichte Waldstuecke mit lockeren Raendern, dazwischen offene Wiesen
+      (x, z, h, slope) => slope < 0.38 && h < 470 - slope * 120 && this.rng.next() < 0.03 + 0.95 * THREE.MathUtils.smoothstep(forestNoise(x, z), -0.1, 0.55),
+      120000,
     );
-    const variants = [9, 14, 19].map((hgt) => buildConifer(this.rng, hgt));
-    // In Kacheln aufteilen, damit Frustum-Culling (Kamera und Schatten) greift
+    const HEIGHTS = [9, 13, 16, 20];
+    const variants = [0, 1].map((lod) => HEIGHTS.map((hgt) => buildConifer(this.rng, hgt, lod)));
+    // In Kacheln aufteilen, damit Frustum-Culling (Kamera und Schatten) greift; weit weg einfachere Baeume
     const CELL = 450;
-    const buckets = new Map<string, { vi: number; list: THREE.Vector3[] }>();
+    const buckets = new Map<string, { vi: number; lod: number; list: THREE.Vector3[] }>();
     pos.forEach((p, i) => {
-      const vi = i % 3;
-      const key = `${vi}_${Math.floor(p.x / CELL)}_${Math.floor(p.z / CELL)}`;
-      if (!buckets.has(key)) buckets.set(key, { vi, list: [] });
+      const vi = i % HEIGHTS.length;
+      const lod = Math.hypot(p.x - this.player.x, p.z - this.player.z) > 950 ? 1 : 0;
+      const key = `${vi}_${lod}_${Math.floor(p.x / CELL)}_${Math.floor(p.z / CELL)}`;
+      if (!buckets.has(key)) buckets.set(key, { vi, lod, list: [] });
       buckets.get(key)!.list.push(p);
     });
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), e = new THREE.Euler();
     const col = new THREE.Color();
-    buckets.forEach(({ vi, list }) => {
-      const v = variants[vi];
+    buckets.forEach(({ vi, lod, list }) => {
+      const v = variants[lod][vi];
       const trunk = new THREE.InstancedMesh(v.trunk, barkMat, list.length);
       const fol = new THREE.InstancedMesh(v.foliage, folMat, list.length);
       fol.customDepthMaterial = depth;
@@ -157,7 +198,8 @@ export class Vegetation {
         m.compose(new THREE.Vector3(p.x, p.y - 0.3, p.z), q, s);
         trunk.setMatrixAt(i, m);
         fol.setMatrixAt(i, m);
-        col.setHSL(this.rng.range(0.22, 0.3), this.rng.range(0.25, 0.5), this.rng.range(0.32, 0.5));
+        this.ground.addTree(p.x, p.z, HEIGHTS[vi] * s.y);
+        col.setHSL(this.rng.range(0.2, 0.36), this.rng.range(0.22, 0.45), this.rng.range(0.3, 0.46));
         fol.setColorAt(i, col);
       });
       for (const im of [trunk, fol]) {
@@ -171,7 +213,8 @@ export class Vegetation {
 
   private buildRocks() {
     const map = rockTexture();
-    const mat = new THREE.MeshStandardMaterial({ map, roughness: 0.95 });
+    const mat = new THREE.MeshStandardMaterial({ map, roughness: 0.95, color: 0xb8b4ac });
+    customize(mat, 'rocks', (shader) => matte(shader, 0.5));
     const geos = [0, 1, 2].map(() => {
       const g = new THREE.IcosahedronGeometry(1, 3);
       const p = g.attributes.position as THREE.BufferAttribute;
@@ -223,7 +266,7 @@ export class Vegetation {
   private buildBushes() {
     const map = bushCardTexture();
     const mat = new THREE.MeshStandardMaterial({ map, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.9 });
-    addWind(mat, 'clamp(position.y/1.5,0.0,1.0)', 0.5);
+    foliage(mat, 'bushes', 'clamp(position.y/1.5,0.0,1.0)', 0.5);
     const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map, alphaTest: 0.4 });
     const geo = this.bushGeometry(12, 1);
     const pos = this.scatter(Math.round(2600 * V()), { x: [-1100, 1100], z: [-1500, 400] }, (_x, _z, h, slope) => slope < 0.33 && h < 470, 30000);
@@ -236,7 +279,7 @@ export class Vegetation {
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.rng.range(0, 6.28));
       m.compose(p, q, new THREE.Vector3(sc, sc * this.rng.range(0.7, 1.1), sc));
       im.setMatrixAt(i, m);
-      col.setHSL(this.rng.range(0.15, 0.27), 0.4, this.rng.range(0.38, 0.55));
+      col.setHSL(this.rng.range(0.15, 0.27), 0.35, this.rng.range(0.55, 0.72));
       im.setColorAt(i, col);
     });
     im.castShadow = true;
@@ -247,8 +290,28 @@ export class Vegetation {
 
   private buildGrass(enemyAreas: THREE.Vector3[], player: THREE.Vector3) {
     const map = grassCardTexture();
-    const mat = new THREE.MeshStandardMaterial({ map, alphaTest: 0.35, side: THREE.DoubleSide, roughness: 1 });
-    addWind(mat, 'uv.y*uv.y', 1.6);
+    const mat = new THREE.MeshStandardMaterial({ map, alphaTest: 0.38, side: THREE.DoubleSide, roughness: 1 });
+    // Halme uebernehmen die Wiesenfarbe des Bodens darunter
+    foliage(mat, 'grass', 'uv.y*uv.y', 1.6, (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vGPos;\nvarying float vGUp;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGUp = uv.y;')
+        .replace('#include <project_vertex>', '#include <project_vertex>\nvGPos = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vGPos;\nvarying float vGUp;\n' + GLSL_NOISE)
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          {
+            float dry;
+            vec3 base = meadowColor(vGPos.xz, 0.0, 0.0, dry);
+            float tip = smoothstep(0.0, 1.0, vGUp);
+            vec3 c = base * mix(0.55, 1.6, tip) * (0.85 + 0.3 * tNoise(vGPos.xz * 0.7));
+            c = mix(c, c * vec3(1.15, 1.08, 0.8), tip * tip * 0.4);
+            diffuseColor.rgb *= c * 2.1;
+          }`,
+        );
+    });
     const parts: THREE.BufferGeometry[] = [];
     for (let i = 0; i < 3; i++) {
       const g = new THREE.PlaneGeometry(0.75, 0.55, 1, 2);
@@ -283,7 +346,7 @@ export class Vegetation {
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), this.rng.range(0, 6.28));
       m.compose(new THREE.Vector3(p.x, p.y - 0.05, p.z), q, new THREE.Vector3(sc, sc * this.rng.range(0.7, 1.3), sc));
       im.setMatrixAt(i, m);
-      col.setHSL(this.rng.range(0.14, 0.22), this.rng.range(0.25, 0.45), this.rng.range(0.7, 0.9));
+      col.setHSL(this.rng.range(0.12, 0.25), this.rng.range(0.1, 0.3), this.rng.range(0.82, 0.98));
       im.setColorAt(i, col);
     });
     im.receiveShadow = true;

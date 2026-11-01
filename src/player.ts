@@ -115,9 +115,9 @@ export class Player {
     return lerp(RIFLE.baseFov, RIFLE.baseFov / this.zoom, this.scopeBlend);
   }
 
-  look(dx: number, dy: number) {
+  look(dx: number, dy: number, sensitivity = settings.sensitivity) {
     if (this.state === 'intro' || this.state === 'moving' || this.state === 'dead' || this.state === 'won') return;
-    const sens = 0.0022 * settings.sensitivity * (this.fov / RIFLE.baseFov);
+    const sens = 0.0022 * sensitivity * (this.fov / RIFLE.baseFov);
     this.yaw -= dx * sens;
     this.pitch -= dy * sens;
     const yd = this.yaw - this.baseYaw;
@@ -134,6 +134,19 @@ export class Player {
       if (z !== this.zoom) audio.zoomTick();
       this.zoom = z;
     }
+  }
+
+  /** Stufenloser Zoom (Pinch auf dem Handy). */
+  zoomBy(factor: number) {
+    const z = clamp(this.zoom * factor, RIFLE.zoomMin, RIFLE.zoomMax);
+    if (Math.floor(z) !== Math.floor(this.zoom)) audio.zoomTick();
+    this.zoom = z;
+  }
+
+  stepZero(dir: 1 | -1) {
+    const z = clamp(this.zero + dir * RIFLE.zeroStep, RIFLE.zeroMin, RIFLE.zeroMax);
+    if (z !== this.zero) audio.zoomTick();
+    this.zero = z;
   }
 
   raise() {
