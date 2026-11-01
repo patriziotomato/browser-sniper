@@ -11,6 +11,11 @@ npm run dev
 
 Der Browser oeffnet sich auf http://localhost:5173. Grafikstufe im Menue waehlbar (oder `?q=niedrig` an die URL haengen).
 
+## Online spielen
+
+https://patriziotomato.github.io/browser-sniper/ (wird bei jedem Push auf `main` per GitHub Actions gebaut).
+Online gibt es keinen Server fuer den Jev-Proxy, dort steuert die lokale KI die Gegner.
+
 ## Jev (Gegner-Taktik)
 
 In `.env.local`:

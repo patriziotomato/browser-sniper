@@ -15,6 +15,8 @@ export default defineConfig(({ mode }) => {
     },
   };
   return {
+    // GitHub Pages liegt unter /browser-sniper/ (ohne Server: Jev ist dort aus, die lokale KI spielt)
+    base: process.env.GITHUB_PAGES ? '/browser-sniper/' : '/',
     define: {
       __JEV_ENABLED__: JSON.stringify(key.length > 0),
     },
